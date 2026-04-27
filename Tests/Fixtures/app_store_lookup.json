@@ -1,0 +1,13 @@
+{
+  "resultCount": 1,
+  "results": [
+    {
+      "kind": "mac-software",
+      "trackId": 123456789,
+      "version": "2.3.1",
+      "trackViewUrl": "https://apps.apple.com/app/id123456789",
+      "releaseNotes": "Bug fixes and improvements.",
+      "currentVersionReleaseDate": "2026-03-01T10:00:00Z"
+    }
+  ]
+}

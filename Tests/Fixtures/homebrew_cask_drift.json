@@ -1,0 +1,29 @@
+[
+  {
+    "token": "example-app",
+    "version": "3.4.5",
+    "homepage": "https://example.com",
+    "artifacts": [
+      { "app": ["Example.app"] },
+      { "bundle_identifier": "com.example.app" }
+    ]
+  },
+  {
+    "token": "alt-app",
+    "version": "9.0",
+    "artifacts": [
+      {
+        "nested": {
+          "bundleIdentifier": ["com.alt.one", "com.alt.two"]
+        }
+      }
+    ]
+  },
+  {
+    "token": "broken-app",
+    "version": null,
+    "artifacts": [
+      { "app": ["Broken.app"] }
+    ]
+  }
+]

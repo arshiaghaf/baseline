@@ -1,0 +1,17 @@
+.DS_Store
+
+# Tuist/Xcode generated artifacts
+.DerivedData/
+Derived/
+Baseline.xcodeproj/
+Baseline.xcworkspace/
+
+# Swift/Xcode local build output
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Release packaging output
+dist/
+*.dmg
