@@ -30,6 +30,10 @@ Unsigned builds are not notarized by Apple. macOS Gatekeeper may warn when openi
 
   ![Baseline search on the Homebrew tab showing cask discovery and install](docs/images/search.png)
 
+- Ignore items you do not want to update yet, and keep them separated in dedicated ignored sections
+
+  ![Baseline ignored items section for apps updates](docs/images/ignore.png)
+
 - Best-effort App Store updates through `mas upgrade <appId>` when `mas` is installed
 - Homebrew-managed app inventory and update actions for installed casks and formulae when Homebrew is installed
 - Search-driven Homebrew discovery from the menu bar search button:
