@@ -588,6 +588,11 @@ private struct HomebrewLookupCacheKey: Hashable {
     let localVersion: Version
 }
 
+private struct HomebrewIconCacheKey: Hashable {
+    let itemID: String
+    let appearance: IconAppearance?
+}
+
 private struct RefreshCacheState {
     var homebrewIndex: TimedCacheEntry<HomebrewCaskIndex>?
     var homebrewFormulaIndex: TimedCacheEntry<HomebrewFormulaIndex>?
@@ -786,7 +791,7 @@ final class UpdateStore {
     @ObservationIgnored private var pendingExternalUpdateRefreshTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var iconCache: [String: NSImage] = [:]
-    @ObservationIgnored private var homebrewIconCache: [String: NSImage] = [:]
+    @ObservationIgnored private var homebrewIconCache: [HomebrewIconCacheKey: NSImage] = [:]
     @ObservationIgnored private var appReleaseDateCache: [String: Date] = [:]
     @ObservationIgnored private var refreshCacheState = RefreshCacheState()
     @ObservationIgnored private var isHydratingPersistedSnapshot = false
@@ -1867,7 +1872,17 @@ final class UpdateStore {
     }
 
     func icon(for item: HomebrewManagedItem) -> NSImage {
-        if let cached = homebrewIconCache[item.id] {
+        icon(for: item, appearance: .light)
+    }
+
+    func icon(for item: HomebrewManagedItem, appearance: IconAppearance) -> NSImage {
+        let usesFallbackIcon = item.kind != .cask || matchingApp(for: item) == nil
+        let cacheKey = HomebrewIconCacheKey(
+            itemID: item.id,
+            appearance: usesFallbackIcon ? appearance : nil
+        )
+
+        if let cached = homebrewIconCache[cacheKey] {
             return cached
         }
 
@@ -1875,7 +1890,7 @@ final class UpdateStore {
         if item.kind == .cask, let app = matchingApp(for: item) {
             baseIcon = appIcon(for: app)
         } else {
-            baseIcon = fallbackIcon(for: item.kind)
+            baseIcon = fallbackIcon(for: item.kind, appearance: appearance)
         }
 
         let resolvedIcon = (baseIcon.copy() as? NSImage) ?? baseIcon
@@ -1883,12 +1898,16 @@ final class UpdateStore {
             width: MenuPresentationMetrics.rowIconSize,
             height: MenuPresentationMetrics.rowIconSize
         )
-        homebrewIconCache[item.id] = resolvedIcon
+        homebrewIconCache[cacheKey] = resolvedIcon
         return resolvedIcon
     }
 
     func icon(for item: HomebrewCaskDiscoveryItem) -> NSImage {
-        fallbackIcon(for: item.kind)
+        icon(for: item, appearance: .light)
+    }
+
+    func icon(for item: HomebrewCaskDiscoveryItem, appearance: IconAppearance) -> NSImage {
+        fallbackIcon(for: item.kind, appearance: appearance)
     }
 
     func releaseDate(for app: AppRecord) -> Date {
@@ -2377,18 +2396,18 @@ final class UpdateStore {
         appReleaseDateCache = appReleaseDateCache.filter { validIDs.contains($0.key) }
 
         let validHomebrewIDs = Set(homebrewItems.map(\.id))
-        homebrewIconCache = homebrewIconCache.filter { validHomebrewIDs.contains($0.key) }
+        homebrewIconCache = homebrewIconCache.filter { validHomebrewIDs.contains($0.key.itemID) }
     }
 
-    private func fallbackIcon(for kind: HomebrewManagedItemKind) -> NSImage {
+    private func fallbackIcon(for kind: HomebrewManagedItemKind, appearance: IconAppearance) -> NSImage {
         let symbolName = kind == .formula ? "terminal" : "shippingbox"
-        if let placeholder = placeholderIcon(symbolName: symbolName) {
+        if let placeholder = placeholderIcon(symbolName: symbolName, appearance: appearance) {
             return placeholder
         }
         return NSWorkspace.shared.icon(for: .application)
     }
 
-    private func placeholderIcon(symbolName: String) -> NSImage? {
+    private func placeholderIcon(symbolName: String, appearance: IconAppearance) -> NSImage? {
         guard let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) else {
             return nil
         }
@@ -2402,44 +2421,52 @@ final class UpdateStore {
             weight: .medium
         )
         let configuredSymbol = symbol.withSymbolConfiguration(symbolConfig) ?? symbol
-        let colorConfig = NSImage.SymbolConfiguration(
-            hierarchicalColor: NSColor.labelColor.withAlphaComponent(MenuPresentationMetrics.homebrewPlaceholderGlyphAlpha)
-        )
-        let tintedSymbol = configuredSymbol.withSymbolConfiguration(colorConfig) ?? configuredSymbol
 
         let image = NSImage(size: canvasSize)
-        image.lockFocus()
+        let drawPlaceholder = {
+            image.lockFocus()
 
-        let backgroundRect = NSRect(
-            x: (canvasSize.width - placeholderSizeValue) * 0.5,
-            y: (canvasSize.height - placeholderSizeValue) * 0.5,
-            width: placeholderSizeValue,
-            height: placeholderSizeValue
-        )
-        let backgroundPath = NSBezierPath(
-            roundedRect: backgroundRect,
-            xRadius: MenuPresentationMetrics.rowIconCornerRadius * MenuPresentationMetrics.homebrewPlaceholderBoxScale,
-            yRadius: MenuPresentationMetrics.rowIconCornerRadius * MenuPresentationMetrics.homebrewPlaceholderBoxScale
-        )
-        NSColor.tertiaryLabelColor.withAlphaComponent(0.18).setFill()
-        backgroundPath.fill()
+            let backgroundRect = NSRect(
+                x: (canvasSize.width - placeholderSizeValue) * 0.5,
+                y: (canvasSize.height - placeholderSizeValue) * 0.5,
+                width: placeholderSizeValue,
+                height: placeholderSizeValue
+            )
+            let backgroundPath = NSBezierPath(
+                roundedRect: backgroundRect,
+                xRadius: MenuPresentationMetrics.rowIconCornerRadius * MenuPresentationMetrics.homebrewPlaceholderBoxScale,
+                yRadius: MenuPresentationMetrics.rowIconCornerRadius * MenuPresentationMetrics.homebrewPlaceholderBoxScale
+            )
+            NSColor.tertiaryLabelColor.withAlphaComponent(0.18).setFill()
+            backgroundPath.fill()
 
-        let glyphRect = NSRect(
-            x: (canvasSize.width - glyphSizeValue) * 0.5,
-            y: (canvasSize.height - glyphSizeValue) * 0.5,
-            width: glyphSizeValue,
-            height: glyphSizeValue
-        )
-        tintedSymbol.draw(
-            in: glyphRect,
-            from: .zero,
-            operation: .sourceOver,
-            fraction: 1,
-            respectFlipped: true,
-            hints: nil
-        )
+            let colorConfig = NSImage.SymbolConfiguration(
+                hierarchicalColor: NSColor.labelColor.withAlphaComponent(MenuPresentationMetrics.homebrewPlaceholderGlyphAlpha)
+            )
+            let tintedSymbol = configuredSymbol.withSymbolConfiguration(colorConfig) ?? configuredSymbol
+            let glyphRect = NSRect(
+                x: (canvasSize.width - glyphSizeValue) * 0.5,
+                y: (canvasSize.height - glyphSizeValue) * 0.5,
+                width: glyphSizeValue,
+                height: glyphSizeValue
+            )
+            tintedSymbol.draw(
+                in: glyphRect,
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1,
+                respectFlipped: true,
+                hints: nil
+            )
 
-        image.unlockFocus()
+            image.unlockFocus()
+        }
+
+        if let nsAppearance = appearance.nsAppearance {
+            nsAppearance.performAsCurrentDrawingAppearance(drawPlaceholder)
+        } else {
+            drawPlaceholder()
+        }
         return image
     }
 

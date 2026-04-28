@@ -52,6 +52,7 @@ private enum MenuActionConfirmation: Identifiable {
 struct MenuRootView: View {
     @Bindable var store: UpdateStore
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.colorScheme) private var colorScheme
     @State private var selectedTab: MenuTab
     @State private var renderedTab: MenuTab
     @State private var isSearchPresented = false
@@ -132,7 +133,8 @@ struct MenuRootView: View {
                             isUninstallingHomebrewItem: store.isUninstallingHomebrewItem(_:),
                             isHomebrewItemUpdatedPendingRefresh: store.isHomebrewItemUpdatedPendingRefresh(_:),
                             onUpdateAllHomebrew: updateAllHomebrew,
-                            iconForItem: store.icon(for:),
+                            iconAppearance: IconAppearance(colorScheme: colorScheme),
+                            iconForItem: store.icon(for:appearance:),
                             canOpenFromIcon: store.canOpenHomebrewItem(_:),
                             onOpenFromIcon: store.openHomebrewItem(_:),
                             releaseDateForItem: store.releaseDate(for:),
@@ -141,7 +143,7 @@ struct MenuRootView: View {
                             onUpdate: store.performHomebrewUpdate(for:),
                             onRequestUninstall: requestUninstallConfirmation(for:),
                             onRequestInstall: requestInstallConfirmation(for:),
-                            iconForDiscoverItem: store.icon(for:),
+                            iconForDiscoverItem: store.icon(for:appearance:),
                             canOpenDiscoverFromIcon: store.canOpenHomebrewDiscoverItem(_:),
                             onOpenDiscoverFromIcon: store.openHomebrewDiscoverItem(_:),
                             isInstallingDiscoverItem: store.isInstallingHomebrewDiscoverItem(_:),
@@ -906,7 +908,8 @@ private struct HomebrewContentCard: View {
     let isUninstallingHomebrewItem: (HomebrewManagedItem) -> Bool
     let isHomebrewItemUpdatedPendingRefresh: (HomebrewManagedItem) -> Bool
     let onUpdateAllHomebrew: () -> Void
-    let iconForItem: (HomebrewManagedItem) -> NSImage
+    let iconAppearance: IconAppearance
+    let iconForItem: (HomebrewManagedItem, IconAppearance) -> NSImage
     let canOpenFromIcon: (HomebrewManagedItem) -> Bool
     let onOpenFromIcon: (HomebrewManagedItem) -> Void
     let releaseDateForItem: (HomebrewManagedItem) -> Date
@@ -915,7 +918,7 @@ private struct HomebrewContentCard: View {
     let onUpdate: (HomebrewManagedItem) -> Void
     let onRequestUninstall: (HomebrewManagedItem) -> Void
     let onRequestInstall: (HomebrewCaskDiscoveryItem) -> Void
-    let iconForDiscoverItem: (HomebrewCaskDiscoveryItem) -> NSImage
+    let iconForDiscoverItem: (HomebrewCaskDiscoveryItem, IconAppearance) -> NSImage
     let canOpenDiscoverFromIcon: (HomebrewCaskDiscoveryItem) -> Bool
     let onOpenDiscoverFromIcon: (HomebrewCaskDiscoveryItem) -> Void
     let isInstallingDiscoverItem: (HomebrewCaskDiscoveryItem) -> Bool
@@ -946,7 +949,7 @@ private struct HomebrewContentCard: View {
                     } else {
                         ForEach(Array(discoverItems.enumerated()), id: \.element.id) { index, item in
                             HomebrewDiscoverRowView(
-                                icon: Image(nsImage: iconForDiscoverItem(item)),
+                                icon: Image(nsImage: iconForDiscoverItem(item, iconAppearance)),
                                 item: item,
                                 canOpenFromIcon: canOpenDiscoverFromIcon(item),
                                 isInstalling: isInstallingDiscoverItem(item),
@@ -1002,7 +1005,7 @@ private struct HomebrewContentCard: View {
                         } else {
                             ForEach(visibleItems, id: \.element.id) { index, item in
                                 HomebrewRowView(
-                                    icon: Image(nsImage: iconForItem(item)),
+                                    icon: Image(nsImage: iconForItem(item, iconAppearance)),
                                     item: item,
                                     releaseDate: releaseDateForItem(item),
                                     recentlyUpdatedDate: section.showsUpdatedOnDate ? recentlyUpdatedDateForItem(item) : nil,

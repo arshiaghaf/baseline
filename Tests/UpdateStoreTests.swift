@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 @testable import Baseline
@@ -116,6 +117,20 @@ final class UpdateStoreTests: XCTestCase {
         let homebrewIndexStartedAt: Date?
         let homebrewFormulaIndexStartedAt: Date?
         let homebrewInventoryStartedAt: Date?
+    }
+
+    private func renderedBitmapBytes(for image: NSImage) -> [UInt8] {
+        guard
+            let tiffRepresentation = image.tiffRepresentation,
+            let representation = NSBitmapImageRep(data: tiffRepresentation),
+            let bitmapData = representation.bitmapData
+        else {
+            XCTFail("Expected image to produce a bitmap representation")
+            return []
+        }
+
+        let byteCount = representation.bytesPerRow * representation.pixelsHigh
+        return Array(UnsafeBufferPointer(start: bitmapData, count: byteCount))
     }
 
     actor RefreshTimelineBox {
@@ -3750,6 +3765,77 @@ final class UpdateStoreTests: XCTestCase {
         XCTAssertFalse(store.canOpenHomebrewDiscoverItem(entry))
         store.openHomebrewDiscoverItem(entry)
         XCTAssertTrue(externalOpenCalls.snapshot().isEmpty)
+    }
+
+    func testHomebrewFormulaPlaceholderIconDiffersByAppearance() {
+        let store = UpdateStore(
+            dependencies: .live,
+            defaults: UserDefaults(suiteName: "UpdateStoreTests-\(UUID().uuidString)") ?? .standard
+        )
+        let item = HomebrewManagedItem(
+            token: "ripgrep",
+            name: "ripgrep",
+            kind: .formula,
+            installedVersion: Version("14.1.0"),
+            latestVersion: nil,
+            isOutdated: false
+        )
+
+        let lightIcon = store.icon(for: item, appearance: .light)
+        let darkIcon = store.icon(for: item, appearance: .dark)
+
+        XCTAssertNotEqual(
+            renderedBitmapBytes(for: lightIcon),
+            renderedBitmapBytes(for: darkIcon)
+        )
+    }
+
+    func testHomebrewPlaceholderIconCacheSeparatesAppearances() {
+        let store = UpdateStore(
+            dependencies: .live,
+            defaults: UserDefaults(suiteName: "UpdateStoreTests-\(UUID().uuidString)") ?? .standard
+        )
+        let item = HomebrewManagedItem(
+            token: "wget",
+            name: "wget",
+            kind: .formula,
+            installedVersion: Version("1.25.0"),
+            latestVersion: nil,
+            isOutdated: false
+        )
+
+        let firstLightIcon = store.icon(for: item, appearance: .light)
+        let secondLightIcon = store.icon(for: item, appearance: .light)
+        let darkIcon = store.icon(for: item, appearance: .dark)
+
+        XCTAssertTrue(firstLightIcon === secondLightIcon)
+        XCTAssertFalse(firstLightIcon === darkIcon)
+        XCTAssertNotEqual(
+            renderedBitmapBytes(for: firstLightIcon),
+            renderedBitmapBytes(for: darkIcon)
+        )
+    }
+
+    func testHomebrewDiscoveryPlaceholderIconDiffersByAppearance() {
+        let store = UpdateStore(
+            dependencies: .live,
+            defaults: UserDefaults(suiteName: "UpdateStoreTests-\(UUID().uuidString)") ?? .standard
+        )
+        let entry = HomebrewCaskDiscoveryItem(
+            kind: .cask,
+            token: "notion",
+            displayName: "notion",
+            version: Version("7.9.0"),
+            homepageURL: nil
+        )
+
+        let lightIcon = store.icon(for: entry, appearance: .light)
+        let darkIcon = store.icon(for: entry, appearance: .dark)
+
+        XCTAssertNotEqual(
+            renderedBitmapBytes(for: lightIcon),
+            renderedBitmapBytes(for: darkIcon)
+        )
     }
 
     func testInstalledFormulaRemainsNonOpenableFromIconAction() async {
