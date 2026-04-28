@@ -16,14 +16,14 @@ TUIST_SKIP_UPDATE_CHECK=1 tuist xcodebuild -project Baseline.xcodeproj -scheme B
 xcodebuild -project Baseline.xcodeproj -scheme Baseline -destination 'platform=macOS' -derivedDataPath .DerivedData test
 ```
 
-4. Build the unsigned DMG:
+4. Build the unsigned DMG and release-note checksum text:
 
 ```bash
-scripts/create-unsigned-dmg.sh 0.1.0
+scripts/prepare-unsigned-release.sh 0.1.0
 ```
 
 5. Upload `dist/Baseline-0.1.0-unsigned.dmg` to GitHub Releases.
-6. Include the printed SHA-256 checksum in the release notes.
+6. Use `dist/Baseline-0.1.0-unsigned-release-notes.md` as the release-note starting point.
 7. Clearly label the artifact as unsigned.
 
 ## Future Signed Release Path

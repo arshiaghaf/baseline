@@ -7,6 +7,7 @@ Describe the change and why it is needed.
 - [ ] `TUIST_SKIP_UPDATE_CHECK=1 tuist build Baseline --configuration Debug`
 - [ ] `TUIST_SKIP_UPDATE_CHECK=1 tuist generate --no-open`
 - [ ] `xcodebuild -project Baseline.xcodeproj -scheme Baseline -destination 'platform=macOS' -derivedDataPath .DerivedData test`
+- [ ] Preview handoff only: `scripts/validate-preview.sh 0.0.0-preview`
 
 If any validation was not run, explain why.
 

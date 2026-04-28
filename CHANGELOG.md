@@ -7,3 +7,6 @@ This project follows a lightweight changelog format inspired by Keep a Changelog
 ## Unreleased
 
 - Initial open-source repository preparation.
+- Added a local diagnostics report from Settings for support and troubleshooting.
+- Added preview validation and unsigned release preparation scripts.
+- Documented the preview validation checklist.

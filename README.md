@@ -84,6 +84,14 @@ TUIST_SKIP_UPDATE_CHECK=1 tuist xcodebuild -project Baseline.xcodeproj -scheme B
 xcodebuild -project Baseline.xcodeproj -scheme Baseline -destination 'platform=macOS' -derivedDataPath .DerivedData test
 ```
 
+For a fuller preview handoff, run:
+
+```bash
+scripts/validate-preview.sh 0.0.0-preview
+```
+
+This builds, tests, packages an unsigned DMG, installs `/Applications/Baseline.app`, and smoke-launches the installed copy.
+
 ## Package An Unsigned DMG
 
 ```bash
@@ -91,6 +99,12 @@ scripts/create-unsigned-dmg.sh 0.1.0
 ```
 
 The script builds a Release app, creates `dist/Baseline-0.1.0-unsigned.dmg`, and prints a SHA-256 checksum. See [docs/RELEASING.md](docs/RELEASING.md) for release steps and limitations.
+
+To create the unsigned DMG plus release-note checksum text:
+
+```bash
+scripts/prepare-unsigned-release.sh 0.1.0
+```
 
 ## Optional Local Tooling
 
@@ -108,6 +122,7 @@ Baseline keeps update logic outside SwiftUI views:
 - `Tests` covers parsers, version logic, store policy, security checks, and fixtures.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for more detail.
+See [docs/VALIDATION.md](docs/VALIDATION.md) for preview validation.
 
 ## Privacy And Security
 
