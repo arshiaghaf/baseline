@@ -942,6 +942,34 @@ final class UpdateStore {
         refreshErrorMessage = nil
     }
 
+    func diagnosticsReport() -> BaselineDiagnosticsReport {
+        BaselineDiagnosticsReport(
+            generatedAt: nowProvider(),
+            lastRefreshDate: lastRefreshDate,
+            isRefreshing: isRefreshing,
+            appCount: apps.count,
+            availableAppCount: availableApps.count,
+            installedAppCount: installedApps.count,
+            ignoredAppCount: ignoredApps.count,
+            recentlyUpdatedAppCount: recentlyUpdatedApps.count,
+            homebrewItemCount: homebrewItems.count,
+            homebrewOutdatedCount: homebrewOutdatedItems.count,
+            homebrewInstalledCount: homebrewInstalledItems.count,
+            homebrewIgnoredCount: homebrewIgnoredItems.count,
+            homebrewRecentlyUpdatedCount: homebrewRecentlyUpdatedItems.count,
+            updateSourceCounts: Dictionary(grouping: updatesByAppID.values, by: \.source)
+                .mapValues(\.count),
+            scanDirectories: scanDirectories,
+            additionalDirectoryCount: additionalDirectories.count,
+            autoRefreshEnabled: autoRefreshEnabled,
+            refreshIntervalMinutes: refreshIntervalMinutes,
+            useMasForAppStoreUpdates: useMasForAppStoreUpdates,
+            isMasInstalled: isMasInstalled,
+            isHomebrewInstalled: isHomebrewInstalledForMasInstall,
+            lastRefreshMessage: refreshErrorMessage
+        )
+    }
+
     private func requestRefresh(mode: RefreshMode) {
         if isRefreshing {
             if mode == .lightweight {
