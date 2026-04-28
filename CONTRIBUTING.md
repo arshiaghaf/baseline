@@ -54,6 +54,14 @@ xcodebuild -project Baseline.xcodeproj -scheme Baseline -destination 'platform=m
 
 If a command cannot run in your environment, mention that in the PR and include the failure output.
 
+For preview or release-candidate handoff, run:
+
+```bash
+scripts/validate-preview.sh 0.0.0-preview
+```
+
+Generated Tuist/Xcode artifacts, DerivedData, DMGs, and `dist/` output are intentionally ignored and should not be committed.
+
 ## Security-Sensitive Changes
 
 Be careful with code that:

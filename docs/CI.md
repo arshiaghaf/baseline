@@ -18,3 +18,11 @@ When CI is added, it should:
 - Build `Baseline`.
 - Run unit tests on `platform=macOS`.
 - Avoid committing generated project files.
+
+The closest local equivalent is:
+
+```bash
+scripts/validate-preview.sh 0.0.0-preview
+```
+
+That command also creates an unsigned DMG and smoke-launches the installed `/Applications/Baseline.app` copy, so it remains a local-only validation step until CI has a macOS desktop session capable of launching the app.
