@@ -1,9 +1,11 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
     @Bindable var store: UpdateStore
     @Environment(\.openURL) private var openURL
     @State private var showsMasInstallPrompt = false
+    @State private var diagnosticsCopyMessage: String?
 
     var body: some View {
         GlassEffectContainer(spacing: 12) {
@@ -41,6 +43,12 @@ struct SettingsView: View {
                         }
                     )
 
+                    SettingsOptionalToolsCard(
+                        isMasInstalled: store.isMasInstalled,
+                        isHomebrewInstalled: store.isHomebrewInstalledForMasInstall,
+                        useMasForAppStoreUpdates: store.useMasForAppStoreUpdates
+                    )
+
                     SettingsDirectoriesCard(
                         scanDirectories: store.scanDirectories,
                         additionalDirectories: store.additionalDirectories,
@@ -51,6 +59,11 @@ struct SettingsView: View {
                     SettingsRefreshIntervalCard(
                         refreshIntervalMinutes: $store.refreshIntervalMinutes,
                         autoRefreshEnabled: $store.autoRefreshEnabled
+                    )
+
+                    SettingsDiagnosticsCard(
+                        copyMessage: diagnosticsCopyMessage,
+                        onCopy: copyDiagnosticsReport
                     )
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -80,6 +93,14 @@ struct SettingsView: View {
         }
     }
 
+    private func copyDiagnosticsReport() {
+        let report = store.diagnosticsReport().render()
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(report, forType: .string)
+        diagnosticsCopyMessage = "Diagnostics copied. Review before sharing."
+    }
+
     private var messageColor: Color {
         if store.masTestSucceeded == true {
             return .green
@@ -88,6 +109,107 @@ struct SettingsView: View {
             return .orange
         }
         return .secondary
+    }
+}
+
+private struct SettingsOptionalToolsCard: View {
+    let isMasInstalled: Bool
+    let isHomebrewInstalled: Bool
+    let useMasForAppStoreUpdates: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Readiness")
+                    .font(.headline)
+                Text("Baseline works without optional tools, but direct update actions improve when they are available.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            SettingsReadinessRow(
+                title: "Homebrew",
+                value: isHomebrewInstalled ? "Available" : "Not detected",
+                isReady: isHomebrewInstalled,
+                detail: isHomebrewInstalled
+                    ? "Homebrew cask and formula actions can run locally."
+                    : "Baseline will use external Homebrew pages for install or update actions."
+            )
+
+            SettingsReadinessRow(
+                title: "mas",
+                value: isMasInstalled ? "Available" : "Not detected",
+                isReady: isMasInstalled,
+                detail: isMasInstalled && useMasForAppStoreUpdates
+                    ? "App Store updates can start through mas when an item ID is available."
+                    : "App Store updates fall back to opening the App Store page."
+            )
+        }
+        .menuCardStyle()
+    }
+}
+
+private struct SettingsReadinessRow: View {
+    let title: String
+    let value: String
+    let isReady: Bool
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle()
+                .fill(isReady ? Color.green : Color.gray)
+                .frame(width: 10, height: 10)
+                .padding(.top, 4)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack {
+                    Text(title)
+                        .font(.callout.weight(.semibold))
+                    Text(value)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+        }
+    }
+}
+
+private struct SettingsDiagnosticsCard: View {
+    let copyMessage: String?
+    let onCopy: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Diagnostics")
+                        .font(.headline)
+                    Text("Copy a local report with counts, tool status, scan paths, and the latest non-sensitive refresh message.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("Copy Report", action: onCopy)
+                    .menuSecondaryButtonStyle()
+                    .controlSize(.small)
+            }
+
+            if let copyMessage {
+                Text(copyMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .menuCardStyle()
     }
 }
 
