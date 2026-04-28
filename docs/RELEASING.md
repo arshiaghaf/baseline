@@ -8,7 +8,7 @@ Unsigned DMGs are not notarized by Apple. macOS Gatekeeper may warn users before
 
 1. Choose a version, for example `0.1.0`.
 2. Update `CHANGELOG.md`.
-3. Run validation:
+3. Run local validation:
 
 ```bash
 TUIST_SKIP_UPDATE_CHECK=1 tuist generate --no-open
@@ -16,15 +16,28 @@ TUIST_SKIP_UPDATE_CHECK=1 tuist xcodebuild -project Baseline.xcodeproj -scheme B
 xcodebuild -project Baseline.xcodeproj -scheme Baseline -destination 'platform=macOS' -derivedDataPath .DerivedData test
 ```
 
-4. Build the unsigned DMG and release-note checksum text:
+4. Optionally preview the unsigned release artifacts locally:
 
 ```bash
 scripts/prepare-unsigned-release.sh 0.1.0
 ```
 
-5. Upload `dist/Baseline-0.1.0-unsigned.dmg` to GitHub Releases.
-6. Use `dist/Baseline-0.1.0-unsigned-release-notes.md` as the release-note starting point.
-7. Clearly label the artifact as unsigned.
+5. Commit the release prep changes.
+6. Push `main`.
+7. Create and push the release tag:
+
+```bash
+git tag v0.1.0
+git push baseline v0.1.0
+```
+
+8. The GitHub Actions release workflow builds the unsigned DMG, writes `dist/Baseline-0.1.0-unsigned.dmg.sha256`, creates the GitHub Release, and uploads both files.
+9. Verify the GitHub Release contains:
+   - `Baseline-0.1.0-unsigned.dmg`
+   - `Baseline-0.1.0-unsigned.dmg.sha256`
+   - release notes that clearly label the artifact as unsigned.
+
+The release workflow accepts tags like `v0.1.0` and `v0.1.0-beta.1`.
 
 ## Future Signed Release Path
 

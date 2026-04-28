@@ -1,10 +1,19 @@
 # Continuous Integration
 
-This repository intentionally does not include a GitHub Actions workflow yet.
+This repository uses GitHub Actions for pull request and `main` branch validation.
 
-Baseline currently targets macOS 26. CI should be added once the public macOS runner image and Xcode version can reliably build and test that deployment target.
+Baseline targets macOS 26, so CI runs on GitHub's `macos-26` hosted runner.
 
-Until then, validate changes locally:
+The CI workflow:
+- Installs Tuist with Homebrew.
+- Lints release scripts with `bash -n`.
+- Generates the Xcode project.
+- Builds the Debug app with code signing disabled.
+- Runs unit tests on `platform=macOS`.
+
+CI intentionally does not launch the menubar app. Installed-app smoke validation still requires the local desktop session.
+
+The local equivalent for build and test validation is:
 
 ```bash
 TUIST_SKIP_UPDATE_CHECK=1 tuist generate --no-open
@@ -12,17 +21,12 @@ TUIST_SKIP_UPDATE_CHECK=1 tuist xcodebuild -project Baseline.xcodeproj -scheme B
 xcodebuild -project Baseline.xcodeproj -scheme Baseline -destination 'platform=macOS' -derivedDataPath .DerivedData test
 ```
 
-When CI is added, it should:
-- Install or bootstrap Tuist.
-- Generate the Xcode project.
-- Build `Baseline`.
-- Run unit tests on `platform=macOS`.
-- Avoid committing generated project files.
-
-The closest local equivalent is:
+For full preview validation, run:
 
 ```bash
 scripts/validate-preview.sh 0.0.0-preview
 ```
 
-That command also creates an unsigned DMG and smoke-launches the installed `/Applications/Baseline.app` copy, so it remains a local-only validation step until CI has a macOS desktop session capable of launching the app.
+That command also creates an unsigned DMG and smoke-launches the installed `/Applications/Baseline.app` copy.
+
+Unsigned DMG release publishing is handled by `.github/workflows/release.yml` when a `vX.Y.Z` tag is pushed.

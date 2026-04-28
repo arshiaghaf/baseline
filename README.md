@@ -44,11 +44,11 @@ Unsigned builds are not notarized by Apple. macOS Gatekeeper may warn when openi
 
 ## Download
 
-Downloadable preview builds, when available, are published on the GitHub Releases page as unsigned DMGs.
+Preview builds are published on the GitHub Releases page as unsigned DMGs.
 
 For each release:
 - Download `Baseline-<version>-unsigned.dmg`.
-- Verify the published SHA-256 checksum if one is provided.
+- Verify the published SHA-256 checksum.
 - Drag `Baseline.app` to `/Applications`.
 
 Because the app is unsigned, macOS may show an unidentified-developer warning. This is expected for preview builds without an Apple Developer account.

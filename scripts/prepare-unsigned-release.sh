@@ -10,6 +10,7 @@ VERSION="$1"
 APP_NAME="Baseline"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DMG_PATH="$ROOT_DIR/dist/${APP_NAME}-${VERSION}-unsigned.dmg"
+CHECKSUM_PATH="$ROOT_DIR/dist/${APP_NAME}-${VERSION}-unsigned.dmg.sha256"
 NOTES_PATH="$ROOT_DIR/dist/${APP_NAME}-${VERSION}-unsigned-release-notes.md"
 
 if [[ ! "$VERSION" =~ ^[0-9]+[.][0-9]+[.][0-9]+([-+][A-Za-z0-9._-]+)?$ ]]; then
@@ -33,6 +34,8 @@ fi
 
 CHECKSUM="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
 
+echo "${CHECKSUM}  ${APP_NAME}-${VERSION}-unsigned.dmg" > "$CHECKSUM_PATH"
+
 cat > "$NOTES_PATH" <<NOTES
 # Baseline ${VERSION} unsigned preview
 
@@ -55,6 +58,9 @@ NOTES
 
 echo "Prepared unsigned release artifact:"
 echo "$DMG_PATH"
+echo
+echo "Prepared checksum:"
+echo "$CHECKSUM_PATH"
 echo
 echo "Prepared release notes:"
 echo "$NOTES_PATH"

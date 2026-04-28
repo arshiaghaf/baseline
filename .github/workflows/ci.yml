@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: macos-26
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Tuist
+        run: brew install tuist
+
+      - name: Lint shell scripts
+        run: |
+          bash -n scripts/create-unsigned-dmg.sh
+          bash -n scripts/prepare-unsigned-release.sh
+          bash -n scripts/validate-preview.sh
+
+      - name: Generate Xcode project
+        run: TUIST_SKIP_UPDATE_CHECK=1 tuist generate --no-open
+
+      - name: Build Debug app
+        run: |
+          xcodebuild \
+            -project Baseline.xcodeproj \
+            -scheme Baseline \
+            -configuration Debug \
+            -destination "platform=macOS" \
+            -derivedDataPath .DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= \
+            build
+
+      - name: Run unit tests
+        run: |
+          xcodebuild \
+            -project Baseline.xcodeproj \
+            -scheme Baseline \
+            -destination "platform=macOS" \
+            -derivedDataPath .DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= \
+            test
