@@ -1876,10 +1876,9 @@ final class UpdateStore {
     }
 
     func icon(for item: HomebrewManagedItem, appearance: IconAppearance) -> NSImage {
-        let usesFallbackIcon = item.kind != .cask || matchingApp(for: item) == nil
         let cacheKey = HomebrewIconCacheKey(
             itemID: item.id,
-            appearance: usesFallbackIcon ? appearance : nil
+            appearance: appearance
         )
 
         if let cached = homebrewIconCache[cacheKey] {
