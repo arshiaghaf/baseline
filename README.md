@@ -10,6 +10,34 @@ Baseline is early-stage macOS software. The core update-checking flow is functio
 
 Unsigned builds are not notarized by Apple. macOS Gatekeeper may warn when opening them. If you are not comfortable with unsigned preview software, build from source or wait for a signed release path.
 
+## Features
+
+- Menubar-first UX (`LSUIElement=true`)
+- Installed app scanning from system, user, and custom app directories
+- Update detection through:
+  - App Store lookup API
+  - Sparkle/DevMate appcasts
+  - Homebrew cask metadata
+- View installed and recently updated apps from the `Apps` tab
+
+  ![Baseline Apps tab showing available and recently updated apps](docs/images/apps.png)
+
+- View installed and recently updated Homebrew casks/formulae from the `Homebrew` tab
+
+  ![Baseline Homebrew tab showing Homebrew-managed items](docs/images/homebrew.png)
+
+- Search Homebrew from the menu bar search field to discover installable casks/formulae
+
+  ![Baseline search on the Homebrew tab showing cask discovery and install](docs/images/search.png)
+
+- Best-effort App Store updates through `mas upgrade <appId>` when `mas` is installed
+- Homebrew-managed app inventory and update actions for installed casks and formulae when Homebrew is installed
+- Search-driven Homebrew discovery from the menu bar search button:
+  - Search installable casks and formulae
+  - Install casks with `brew install --cask <token>` when `brew` is installed
+  - Install formulae with `brew install <token>` when `brew` is installed
+- External fallback links when local CLI tooling is unavailable
+
 ## Download
 
 Downloadable preview builds, when available, are published on the GitHub Releases page as unsigned DMGs.
@@ -60,34 +88,10 @@ scripts/create-unsigned-dmg.sh 0.1.0
 
 The script builds a Release app, creates `dist/Baseline-0.1.0-unsigned.dmg`, and prints a SHA-256 checksum. See [docs/RELEASING.md](docs/RELEASING.md) for release steps and limitations.
 
-## Features
-
-- Menubar-first UX (`LSUIElement=true`)
-- Installed app scanning from system, user, and custom app directories
-- Update detection through:
-  - App Store lookup API
-  - Sparkle/DevMate appcasts
-  - Homebrew cask metadata
-- Best-effort App Store updates through `mas upgrade <appId>` when `mas` is installed
-- Homebrew-managed app inventory and update actions for installed casks and formulae when Homebrew is installed
-- Search-driven Homebrew discovery from the menu bar search button:
-  - Search installable casks and formulae
-  - Install casks with `brew install --cask <token>` when `brew` is installed
-  - Install formulae with `brew install <token>` when `brew` is installed
-- External fallback links when local CLI tooling is unavailable
-
 ## Optional Local Tooling
 
 - `mas` is optional. Without it, Baseline opens the App Store page externally instead of running `mas upgrade`.
 - Homebrew (`brew`) is optional. Without it, Baseline opens external Homebrew/app pages instead of running install/upgrade actions.
-
-## Screenshots
-
-![Baseline search on the Homebrew tab showing cask discovery and install](docs/images/search.png)
-
-![Baseline Homebrew tab showing Homebrew-managed items](docs/images/homebrew.png)
-
-![Baseline Apps tab showing available and recently updated apps](docs/images/apps.png)
 
 ## Architecture
 
