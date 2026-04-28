@@ -57,6 +57,39 @@ final class DiagnosticsReportTests: XCTestCase {
         XCTAssertTrue(rendered.contains("Homebrew available for helper install: Yes"))
     }
 
+    func testDiagnosticsReportOmitsRawRefreshOutput() {
+        let report = BaselineDiagnosticsReport(
+            generatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            lastRefreshDate: nil,
+            isRefreshing: false,
+            appCount: 0,
+            availableAppCount: 0,
+            installedAppCount: 0,
+            ignoredAppCount: 0,
+            recentlyUpdatedAppCount: 0,
+            homebrewItemCount: 0,
+            homebrewOutdatedCount: 0,
+            homebrewInstalledCount: 0,
+            homebrewIgnoredCount: 0,
+            homebrewRecentlyUpdatedCount: 0,
+            updateSourceCounts: [:],
+            scanDirectories: [],
+            additionalDirectoryCount: 0,
+            autoRefreshEnabled: true,
+            refreshIntervalMinutes: 60,
+            useMasForAppStoreUpdates: true,
+            isMasInstalled: false,
+            isHomebrewInstalled: false,
+            lastRefreshMessage: "Homebrew uninstall failed for ProtonVPN.\n\nError: existing app at /Users/example/Applications/ProtonVPN.app"
+        )
+
+        let rendered = report.render()
+
+        XCTAssertTrue(rendered.contains("- Last message: Homebrew uninstall failed for ProtonVPN."))
+        XCTAssertFalse(rendered.contains("/Users/example"))
+        XCTAssertFalse(rendered.contains("existing app"))
+    }
+
     private func waitUntil(
         _ predicate: @escaping @MainActor () -> Bool,
         timeout: TimeInterval = 2.0

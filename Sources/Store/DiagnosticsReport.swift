@@ -36,8 +36,8 @@ struct BaselineDiagnosticsReport: Sendable {
         lines.append("- Refreshing: \(Self.yesNo(isRefreshing))")
         lines.append("- Auto refresh: \(Self.yesNo(autoRefreshEnabled))")
         lines.append("- Refresh interval: \(refreshIntervalMinutes) minutes")
-        if let lastRefreshMessage, !lastRefreshMessage.isEmpty {
-            lines.append("- Last message: \(lastRefreshMessage)")
+        if let safeLastRefreshMessage {
+            lines.append("- Last message: \(safeLastRefreshMessage)")
         }
         lines.append("")
         lines.append("Apps")
@@ -77,6 +77,15 @@ struct BaselineDiagnosticsReport: Sendable {
             }
             .joined(separator: ", ")
             .nilIfEmpty ?? "None"
+    }
+
+    private var safeLastRefreshMessage: String? {
+        lastRefreshMessage?
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
     }
 
     private static func format(_ date: Date) -> String {
