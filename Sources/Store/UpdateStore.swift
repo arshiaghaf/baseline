@@ -800,6 +800,7 @@ final class UpdateStore {
     private static let recentlyUpdatedLimit = 40
     private static let defaultExternalUpdateRefreshDelaySeconds: [UInt64] = [5, 15, 30, 60]
     private static let refreshCacheTTL: TimeInterval = 15 * 60
+    private static let staleRefreshCacheFallbackTTL: TimeInterval = 24 * 60 * 60
     private static let snapshotPersistDebounceNanoseconds: UInt64 = 140_000_000
 
     init(
@@ -2640,8 +2641,9 @@ final class UpdateStore {
         var cacheState = cacheState
         let shouldUseCache = mode.usesCachedValues
         let cacheTTL = refreshCacheTTL
+        let staleFallbackTTL = staleRefreshCacheFallbackTTL
 
-        cacheState.pruneExpired(now: now, ttl: cacheTTL)
+        cacheState.pruneExpired(now: now, ttl: staleFallbackTTL)
 
         let canUseCachedHomebrewIndex = shouldUseCache
             && (cacheState.homebrewIndex?.isFresh(at: now, ttl: cacheTTL) ?? false)
@@ -2687,9 +2689,6 @@ final class UpdateStore {
         cacheState.homebrewIndex = homebrewIndexEntry
         cacheState.homebrewFormulaIndex = homebrewFormulaIndexEntry
         cacheState.homebrewInventory = homebrewInventoryEntry
-        if !canUseCachedHomebrewIndex {
-            cacheState.homebrewLookup.removeAll()
-        }
 
         var appStoreLookupMemo: [AppStoreLookupCacheKey: LookupOutcome<AppStoreLookupResult>] = [:]
         var sparkleLookupMemo: [SparkleLookupCacheKey: LookupOutcome<SparkleLookupResult>] = [:]
@@ -2724,7 +2723,8 @@ final class UpdateStore {
                 cacheState.appStoreLookup[key] = TimedCacheEntry(value: value, fetchedAt: now)
             case .transientFailure:
                 transientLookupFailureCount += 1
-                if let cached = cacheState.appStoreLookup[key] {
+                if let cached = cacheState.appStoreLookup[key],
+                   cached.isFresh(at: now, ttl: staleFallbackTTL) {
                     let cachedOutcome = LookupOutcome<AppStoreLookupResult>.completed(value: cached.value)
                     appStoreLookupMemo[key] = cachedOutcome
                     return cachedOutcome
@@ -2760,7 +2760,8 @@ final class UpdateStore {
                 cacheState.sparkleLookup[key] = TimedCacheEntry(value: value, fetchedAt: now)
             case .transientFailure:
                 transientLookupFailureCount += 1
-                if let cached = cacheState.sparkleLookup[key] {
+                if let cached = cacheState.sparkleLookup[key],
+                   cached.isFresh(at: now, ttl: staleFallbackTTL) {
                     let cachedOutcome = LookupOutcome<SparkleLookupResult>.completed(value: cached.value)
                     sparkleLookupMemo[key] = cachedOutcome
                     return cachedOutcome
@@ -2803,7 +2804,8 @@ final class UpdateStore {
                 cacheState.homebrewLookup[key] = TimedCacheEntry(value: value, fetchedAt: now)
             case .transientFailure:
                 transientLookupFailureCount += 1
-                if let cached = cacheState.homebrewLookup[key] {
+                if let cached = cacheState.homebrewLookup[key],
+                   cached.isFresh(at: now, ttl: staleFallbackTTL) {
                     let cachedOutcome = LookupOutcome<HomebrewLookupResult>.completed(value: cached.value)
                     homebrewLookupMemo[key] = cachedOutcome
                     return cachedOutcome
