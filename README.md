@@ -67,10 +67,27 @@ The script builds a Release app, creates `dist/Baseline-0.1.0-unsigned.dmg`, and
 - Update detection through:
   - App Store lookup API
   - Sparkle/DevMate appcasts
-  - Homebrew cask API
-- Best-effort App Store updates through `mas upgrade <appId>` when available
-- Explicit fallback messaging when direct updates are limited or unsupported
-- Homebrew cask/formula discovery and update flows
+  - Homebrew cask metadata
+- Best-effort App Store updates through `mas upgrade <appId>` when `mas` is installed
+- Homebrew-managed app inventory and update actions for installed casks and formulae when Homebrew is installed
+- Search-driven Homebrew discovery from the menu bar search button:
+  - Search installable casks and formulae
+  - Install casks with `brew install --cask <token>` when `brew` is installed
+  - Install formulae with `brew install <token>` when `brew` is installed
+- External fallback links when local CLI tooling is unavailable
+
+## Optional Local Tooling
+
+- `mas` is optional. Without it, Baseline opens the App Store page externally instead of running `mas upgrade`.
+- Homebrew (`brew`) is optional. Without it, Baseline opens external Homebrew/app pages instead of running install/upgrade actions.
+
+## Screenshots
+
+![Baseline search on the Homebrew tab showing cask discovery and install](docs/images/search.png)
+
+![Baseline Homebrew tab showing Homebrew-managed items](docs/images/homebrew.png)
+
+![Baseline Apps tab showing available and recently updated apps](docs/images/apps.png)
 
 ## Architecture
 
