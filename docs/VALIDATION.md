@@ -37,4 +37,3 @@ Confirm:
 - `dist/Baseline-<version>-unsigned-release-notes.md` includes the SHA-256 checksum.
 - The release notes clearly describe the artifact as unsigned and not notarized.
 - The DMG opens and `Baseline.app` can be copied to `/Applications`.
-

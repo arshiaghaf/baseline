@@ -61,4 +61,3 @@ echo "$NOTES_PATH"
 echo
 echo "SHA-256:"
 echo "${CHECKSUM}  ${APP_NAME}-${VERSION}-unsigned.dmg"
-
