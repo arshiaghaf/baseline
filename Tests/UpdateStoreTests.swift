@@ -4433,6 +4433,7 @@ final class UpdateStoreTests: XCTestCase {
         store.refreshNow()
         await waitUntilRefreshFinishes(store)
         XCTAssertTrue(store.availableApps.isEmpty)
+        XCTAssertTrue(store.lastRefreshNoticeMessage?.contains("could not be reached") == true)
 
         let appStoreCallsAfterFailure = await appStoreLookupCalls.snapshot()
         let sparkleCallsAfterFailure = await sparkleLookupCalls.snapshot()
@@ -4450,6 +4451,7 @@ final class UpdateStoreTests: XCTestCase {
         XCTAssertEqual(store.updatesByAppID[sparkleApp.id]?.source, .sparkle)
         XCTAssertEqual(store.updatesByAppID[homebrewApp.id]?.source, .homebrew)
         XCTAssertEqual(Set(store.availableApps.map(\.displayName)), Set(["Store", "Sparkle", "BrewTool"]))
+        XCTAssertNil(store.lastRefreshNoticeMessage)
 
         let appStoreCalls = await appStoreLookupCalls.snapshot()
         let sparkleCalls = await sparkleLookupCalls.snapshot()
@@ -4457,6 +4459,70 @@ final class UpdateStoreTests: XCTestCase {
         XCTAssertEqual(appStoreCalls, 2)
         XCTAssertEqual(sparkleCalls, 2)
         XCTAssertEqual(homebrewCalls, 4)
+    }
+
+    func testFullRefreshKeepsCachedLookupResultAfterTransientFailure() async {
+        let phase = PhaseBox()
+        let now = DateBox(Date(timeIntervalSince1970: 1_700_075_000))
+        let appStoreLookupCalls = CounterBox()
+
+        let app = AppRecord(
+            bundleURL: URL(fileURLWithPath: "/Applications/Store.app"),
+            displayName: "Store",
+            bundleIdentifier: "com.example.store",
+            localVersion: Version("1.0"),
+            sourceHint: .appStore,
+            sparkleFeedURL: nil
+        )
+
+        let deps = UpdateStoreDependencies(
+            scanApplications: { _ in [app] },
+            lookupAppStore: { _, _ in nil },
+            lookupAppStoreOutcome: { _, _ in
+                await appStoreLookupCalls.increment()
+                guard phase.value > 0 else {
+                    return .completed(value: AppStoreLookupResult(
+                        remoteVersion: Version("2.0"),
+                        updateURL: URL(string: "https://apps.apple.com/app/id-store"),
+                        releaseNotesSummary: nil,
+                        releaseDate: nil
+                    ))
+                }
+                return .transientFailure
+            },
+            lookupSparkle: { _, _ in nil },
+            fetchHomebrewIndex: { .empty },
+            fetchHomebrewFormulaIndex: { .empty },
+            lookupHomebrew: { _, _, _, _ in nil },
+            fetchHomebrewInventory: { [] },
+            runHomebrewUpgrade: { _ in true },
+            runHomebrewItemUpgrade: { _, _ in true },
+            runHomebrewMaintenanceCycle: { true }
+        )
+
+        let store = UpdateStore(
+            dependencies: deps,
+            defaults: UserDefaults(suiteName: "UpdateStoreTests-\(UUID().uuidString)") ?? .standard,
+            nowProvider: { now.value }
+        )
+
+        phase.value = 0
+        store.refreshNow()
+        await waitUntilRefreshFinishes(store)
+
+        XCTAssertEqual(store.updatesByAppID[app.id]?.remoteVersion, Version("2.0"))
+        XCTAssertNil(store.lastRefreshNoticeMessage)
+
+        phase.value = 1
+        now.value = now.value.addingTimeInterval(60)
+        store.refreshNow()
+        await waitUntilRefreshFinishes(store)
+
+        XCTAssertEqual(store.updatesByAppID[app.id]?.remoteVersion, Version("2.0"))
+        XCTAssertTrue(store.lastRefreshNoticeMessage?.contains("kept available cached results") == true)
+
+        let appStoreCalls = await appStoreLookupCalls.snapshot()
+        XCTAssertEqual(appStoreCalls, 2)
     }
 
     func testFullRefreshBypassesFreshCachesAndRefetchesAllSources() async {

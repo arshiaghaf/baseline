@@ -729,6 +729,7 @@ final class UpdateStore {
     private(set) var isRefreshing: Bool = false
     private(set) var lastRefreshDate: Date?
     private(set) var refreshErrorMessage: String?
+    private(set) var lastRefreshNoticeMessage: String?
     private(set) var isMasInstalled: Bool = false
     private(set) var isHomebrewInstalledForMasInstall: Bool = false
     private(set) var isCheckingMas: Bool = false
@@ -966,7 +967,7 @@ final class UpdateStore {
             useMasForAppStoreUpdates: useMasForAppStoreUpdates,
             isMasInstalled: isMasInstalled,
             isHomebrewInstalled: isHomebrewInstalledForMasInstall,
-            lastRefreshMessage: refreshErrorMessage
+            lastRefreshMessage: refreshErrorMessage ?? lastRefreshNoticeMessage
         )
     }
 
@@ -992,6 +993,7 @@ final class UpdateStore {
 
         isRefreshing = true
         refreshErrorMessage = nil
+        lastRefreshNoticeMessage = nil
         activeRefreshMode = mode
 
         refreshTask = Task {
@@ -1056,6 +1058,7 @@ final class UpdateStore {
         )
         lastRefreshDate = result.lastRefreshDate
         refreshErrorMessage = result.errorMessage
+        lastRefreshNoticeMessage = result.noticeMessage
         isRefreshing = false
         appUpdatedPendingRefreshIDs.removeAll()
         homebrewUpdatedPendingRefreshItemIDs.removeAll()
@@ -2693,6 +2696,7 @@ final class UpdateStore {
         var homebrewLookupMemo: [HomebrewLookupCacheKey: LookupOutcome<HomebrewLookupResult>] = [:]
 
         var updates: [String: UpdateRecord] = [:]
+        var transientLookupFailureCount = 0
 
         func cachedAppStoreLookup(
             bundleIdentifier: String,
@@ -2719,7 +2723,12 @@ final class UpdateStore {
             case .completed(let value):
                 cacheState.appStoreLookup[key] = TimedCacheEntry(value: value, fetchedAt: now)
             case .transientFailure:
-                cacheState.appStoreLookup.removeValue(forKey: key)
+                transientLookupFailureCount += 1
+                if let cached = cacheState.appStoreLookup[key] {
+                    let cachedOutcome = LookupOutcome<AppStoreLookupResult>.completed(value: cached.value)
+                    appStoreLookupMemo[key] = cachedOutcome
+                    return cachedOutcome
+                }
             }
             appStoreLookupMemo[key] = fetchedOutcome
             return fetchedOutcome
@@ -2750,7 +2759,12 @@ final class UpdateStore {
             case .completed(let value):
                 cacheState.sparkleLookup[key] = TimedCacheEntry(value: value, fetchedAt: now)
             case .transientFailure:
-                cacheState.sparkleLookup.removeValue(forKey: key)
+                transientLookupFailureCount += 1
+                if let cached = cacheState.sparkleLookup[key] {
+                    let cachedOutcome = LookupOutcome<SparkleLookupResult>.completed(value: cached.value)
+                    sparkleLookupMemo[key] = cachedOutcome
+                    return cachedOutcome
+                }
             }
             sparkleLookupMemo[key] = fetchedOutcome
             return fetchedOutcome
@@ -2788,7 +2802,12 @@ final class UpdateStore {
             case .completed(let value):
                 cacheState.homebrewLookup[key] = TimedCacheEntry(value: value, fetchedAt: now)
             case .transientFailure:
-                cacheState.homebrewLookup.removeValue(forKey: key)
+                transientLookupFailureCount += 1
+                if let cached = cacheState.homebrewLookup[key] {
+                    let cachedOutcome = LookupOutcome<HomebrewLookupResult>.completed(value: cached.value)
+                    homebrewLookupMemo[key] = cachedOutcome
+                    return cachedOutcome
+                }
             }
             homebrewLookupMemo[key] = fetchedOutcome
             return fetchedOutcome
@@ -2897,6 +2916,9 @@ final class UpdateStore {
             inferredHomebrewRecentlyUpdatedTransitions: sanitizedHomebrewInventory.inferredRecentlyUpdatedTransitions,
             lastRefreshDate: now,
             errorMessage: nil,
+            noticeMessage: transientLookupFailureCount > 0
+                ? "Some update checks could not be reached. Baseline kept available cached results where possible."
+                : nil,
             cacheState: cacheState
         )
     }
@@ -3095,6 +3117,7 @@ private struct RefreshResult {
     let inferredHomebrewRecentlyUpdatedTransitions: [InferredHomebrewRecentlyUpdatedTransition]
     let lastRefreshDate: Date
     let errorMessage: String?
+    let noticeMessage: String?
     let cacheState: RefreshCacheState
 }
 
