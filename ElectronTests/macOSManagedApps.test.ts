@@ -176,6 +176,7 @@ it.each([systemPaths[0]!, systemPaths[1]!, systemPaths[3]!, systemPaths[4]!])(
     await symlink(target, alias);
     f.canonical.set(await realpath(target), systemPath);
     const previous = oldApp(alias);
+    const updatedAt = new Date().toISOString();
     const saved = {
       ...defaultPersistedSnapshot(),
       apps: [previous],
@@ -188,7 +189,7 @@ it.each([systemPaths[0]!, systemPaths[1]!, systemPaths[3]!, systemPaths[4]!])(
           localVersion: { raw: "1" },
           remoteVersion: { raw: "2" },
           appStoreItemID: 123,
-          checkedAt: "2026-10-18T00:00:00Z"
+          checkedAt: updatedAt
         }
       ],
       ignoredIDs: [previous.id],
@@ -201,7 +202,7 @@ it.each([systemPaths[0]!, systemPaths[1]!, systemPaths[3]!, systemPaths[4]!])(
           id: "history:utility",
           fromVersion: { raw: "0" },
           toVersion: { raw: "1" },
-          updatedAt: "2026-10-18T00:00:00Z"
+          updatedAt
         }
       ]
     };
@@ -212,7 +213,7 @@ it.each([systemPaths[0]!, systemPaths[1]!, systemPaths[3]!, systemPaths[4]!])(
         targetID: previous.id,
         displayName: previous.displayName,
         channel: "appStore",
-        occurredAt: "2026-10-18T00:00:00Z"
+        occurredAt: updatedAt
       }
     ];
     const store = f.create(saved);
