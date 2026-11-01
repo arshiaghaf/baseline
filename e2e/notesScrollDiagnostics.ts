@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { test, type Locator, type Page } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
 
 export async function observeNotesKeys(page: Page): Promise<void> {
   // Register before the flow begins; do not add layout reads around the key.
@@ -145,8 +146,10 @@ export async function captureNotesScrollFailure(
     await page.waitForTimeout(250);
     evidence.afterSecondFramePassive = await state();
     // A screenshot forces frame production: only intervene AFTER preserving failure.
+    const screenshotPath = test.info().outputPath("notes-after-original-failure.png");
+    await page.screenshot({ path: screenshotPath, timeout: 5000 });
     await test.info().attach("notes-after-original-failure", {
-      body: await page.screenshot({ timeout: 5000 }),
+      path: screenshotPath,
       contentType: "image/png"
     });
     evidence.afterScreenshotImmediate = await state();
@@ -172,8 +175,12 @@ export async function captureNotesScrollFailure(
     evidence.probeError = String(error);
   }
   try {
+    const body = JSON.stringify(evidence, null, 2);
+    console.log(`NOTES_SCROLL_PROBES ${JSON.stringify(evidence)}`);
+    const evidencePath = test.info().outputPath("notes-original-failure-probes.json");
+    await writeFile(evidencePath, body);
     await test.info().attach("notes-original-failure-probes", {
-      body: JSON.stringify(evidence, null, 2),
+      path: evidencePath,
       contentType: "application/json"
     });
   } catch {

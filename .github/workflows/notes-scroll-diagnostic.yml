@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-26, xcode-27]
+        os: [xcode-27]
         dependencies: [main, tooling]
     steps:
       - uses: actions/checkout@v7
@@ -57,7 +57,7 @@ jobs:
         run: npm run test:electron -- --output=test-results/original-order-full
       - name: Standalone original hidden flow with after-failure probes
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
-        run: npm run test:electron -- e2e/release-notes-preview.spec.ts --repeat-each=5 --output=test-results/standalone-notes
+        run: npm run test:electron -- e2e/release-notes-preview.spec.ts --repeat-each=10 --retries=0 --max-failures=1 --output=test-results/standalone-notes
       - name: Retain diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v7
