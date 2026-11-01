@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { defaultPersistedSnapshot } from "../src/shared/domain";
 import type { ReleaseNotesResult } from "../src/shared/releaseNotes";
 import { version } from "../src/shared/version";
+import { captureNotesScrollFailure, observeNotesKeys } from "./notesScrollDiagnostics";
 
 let entry: string;
 test.beforeAll(async () => {
@@ -126,13 +127,9 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     ownedProcess = application.process();
     console.log(`Owned hidden preview PID ${ownedProcess.pid}: ${entry}`);
     const page = await application.firstWindow();
-    // A hidden native window has no OS focus. Emulate Chromium page focus so
-    // keyboard default actions run without showing or activating the fixture.
-    const session = await page.context().newCDPSession(page);
-    await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
-    await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true);
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    await observeNotesKeys(page);
     await expect(page.locator("h1")).toHaveText("All");
     await expect(page.getByRole("note")).toContainText("Fixture mode");
     expect(
@@ -219,62 +216,11 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     await page.keyboard.press("Tab");
     const notesContent = page.getByLabel("Release notes content", { exact: true });
     await expect(notesContent).toBeFocused();
-    await expect
-      .poll(() => notesContent.evaluate((node) => node.scrollHeight > node.clientHeight))
-      .toBe(true);
-    const scrollState = () =>
-      notesContent.evaluate((node) => ({
-        focused: document.hasFocus(),
-        active: document.activeElement === node,
-        visibility: document.visibilityState,
-        scrollTop: node.scrollTop,
-        scrollHeight: node.scrollHeight,
-        clientHeight: node.clientHeight,
-        rect: node.getBoundingClientRect().toJSON(),
-        overflow: getComputedStyle(node).overflow,
-        animations: node.parentElement?.getAnimations().map((animation) => ({
-          playState: animation.playState,
-          currentTime: animation.currentTime
-        }))
-      }));
-    const beforePageDown = await scrollState();
-    await page.evaluate(() => {
-      const events: object[] = [];
-      Object.assign(globalThis, { notesKeyboardEvents: events });
-      for (const type of ["keydown", "keyup"]) {
-        window.addEventListener(type, (event) => {
-          const key = event as KeyboardEvent;
-          if (key.key !== "PageDown") return;
-          queueMicrotask(() =>
-            events.push({
-              type,
-              key: key.key,
-              code: key.code,
-              trusted: key.isTrusted,
-              prevented: key.defaultPrevented,
-              target: (key.target as Element)?.getAttribute("aria-label"),
-              focused: document.hasFocus()
-            })
-          );
-        });
-      }
-    });
     await page.keyboard.press("PageDown");
     try {
       await expect.poll(() => notesContent.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
     } catch (error) {
-      await test.info().attach("notes-keyboard-scroll", {
-        body: JSON.stringify({
-          before: beforePageDown,
-          after: await scrollState(),
-          events: await page.evaluate(
-            () =>
-              (globalThis as typeof globalThis & { notesKeyboardEvents?: object[] })
-                .notesKeyboardEvents
-          )
-        }),
-        contentType: "application/json"
-      });
+      await captureNotesScrollFailure(page, notesContent);
       throw error;
     }
     await page.keyboard.press("Shift+Tab");

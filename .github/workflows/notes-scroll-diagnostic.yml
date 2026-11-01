@@ -1,0 +1,60 @@
+name: Hidden notes scroll diagnosis
+
+on:
+  push:
+    branches: [diagnostic/notes-page-scroll]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notes-scroll-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    name: Notes (${{ matrix.os }}, ${{ matrix.dependencies }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26, xcode-27]
+        dependencies: [main, tooling]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Select exact main dependencies for control
+        if: matrix.dependencies == 'main'
+        run: |
+          git show c5d87843240af38220e534a2e4d59283df3884dc:package.json > package.json
+          git show c5d87843240af38220e534a2e4d59283df3884dc:package-lock.json > package-lock.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.2
+          cache: npm
+      - name: Record environment and locked inputs
+        run: |
+          sw_vers
+          uname -a
+          xcode-select -p
+          xcodebuild -version
+          node --version
+          shasum -a 256 package.json package-lock.json
+      - run: npm ci
+      - run: node -e 'require("electron")'
+      - run: npm run prepare:sparkle
+      - run: npm run build
+      - name: Record renderer artifacts
+        run: shasum -a 256 .vite/renderer/main_window/assets/*
+      - name: Original hidden keyboard flow with after-failure probes
+        run: npm run test:electron -- e2e/release-notes-preview.spec.ts --repeat-each=5 --output=test-results/notes-scroll
+      - name: Retain diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: notes-scroll-${{ matrix.os }}-${{ matrix.dependencies }}-${{ github.run_id }}
+          path: test-results/notes-scroll/
+          if-no-files-found: ignore
+          retention-days: 7
