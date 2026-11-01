@@ -4,9 +4,10 @@
 import { test, type Locator, type Page } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 
-export async function observeNotesKeys(page: Page): Promise<void> {
+export async function observeNotesKeys(page: Page, traceMarkers = false): Promise<void> {
   // Register before the flow begins; do not add layout reads around the key.
-  await page.evaluate(() => {
+  await page.evaluate((markers) => {
+    let keySequence = 0;
     const events: { snapshot: object; event: KeyboardEvent }[] = [];
     const identities = new WeakMap<Element, number>();
     let nextIdentity = 0;
@@ -33,6 +34,8 @@ export async function observeNotesKeys(page: Page): Promise<void> {
           (event) => {
             const key = event as KeyboardEvent;
             if (!["PageDown", "ArrowDown"].includes(key.key)) return;
+            if (markers && capture && type === "keydown")
+              performance.mark(`notes-key-${key.key}-${keySequence++}`);
             const target = key.target as Element | null;
             const entry = {
               type,
@@ -61,7 +64,7 @@ export async function observeNotesKeys(page: Page): Promise<void> {
           capture
         );
     }
-  });
+  }, traceMarkers);
 }
 
 export async function captureNotesScrollFailure(

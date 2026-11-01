@@ -55,9 +55,18 @@ jobs:
       - name: Original-order full Electron suite control
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: npm run test:electron -- --output=test-results/original-order-full
-      - name: Standalone original hidden flow with after-failure probes
+      - name: Hidden prohibited fixture traced arm
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
-        run: npm run test:electron -- e2e/release-notes-preview.spec.ts --repeat-each=50 --retries=0 --max-failures=1 --output=test-results/standalone-notes
+        env:
+          BASELINE_NOTES_DIAGNOSTIC_MODE: hidden
+          BASELINE_NOTES_DIAGNOSTIC_TRACE: "1"
+        run: npm run test:electron -- e2e/release-notes-preview.spec.ts --repeat-each=10 --retries=0 --max-failures=1 --output=test-results/hidden-traced
+      - name: Shown focused isolated fixture traced arm
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        env:
+          BASELINE_NOTES_DIAGNOSTIC_MODE: shown
+          BASELINE_NOTES_DIAGNOSTIC_TRACE: "1"
+        run: npm run test:electron -- e2e/release-notes-preview.spec.ts --repeat-each=10 --retries=0 --max-failures=1 --output=test-results/shown-traced
       - name: Retain diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v7

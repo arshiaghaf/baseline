@@ -11,6 +11,12 @@ import { defaultPersistedSnapshot } from "../src/shared/domain";
 import type { ReleaseNotesResult } from "../src/shared/releaseNotes";
 import { version } from "../src/shared/version";
 import { captureNotesScrollFailure, observeNotesKeys } from "./notesScrollDiagnostics";
+import { startNotesScrollTrace } from "./notesScrollTrace";
+
+const diagnosticShown = process.env.BASELINE_NOTES_DIAGNOSTIC_MODE === "shown";
+const diagnosticTrace = process.env.BASELINE_NOTES_DIAGNOSTIC_TRACE === "1";
+if ((diagnosticShown || diagnosticTrace) && process.env.GITHUB_ACTIONS !== "true")
+  throw new Error("Shown/traced diagnostics require the isolated GitHub Actions runner");
 
 let entry: string;
 test.beforeAll(async () => {
@@ -22,10 +28,11 @@ test.beforeAll(async () => {
   entry = JSON.parse(result.stdout.trim().split("\n").at(-1)!).entry;
 });
 
-test("verifies release-note hovering, cancellation, keyboard, navigation and long content in hidden Electron", async () => {
+test(`verifies release-note hovering, cancellation, keyboard, navigation and long content in ${diagnosticShown ? "shown/focused diagnostic" : "hidden"} Electron`, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "baseline-notes-rendered-"));
   let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
   let ownedProcess: ChildProcess | undefined;
+  let scrollTrace: Awaited<ReturnType<typeof startNotesScrollTrace>> | undefined;
   try {
     const apps = ["Store Sample", "Publisher Sample", "Offline Sample"].map((displayName, i) => ({
       id: `app:notes-${i}`,
@@ -117,7 +124,7 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
       BASELINE_NOTES_PREVIEW_PROFILE: path.join(directory, "profile"),
       BASELINE_NOTES_PREVIEW_SNAPSHOT: path.join(directory, "snapshot.json"),
       BASELINE_NOTES_PREVIEW_FIXTURE_NOTES: path.join(directory, "notes.json"),
-      BASELINE_NOTES_PREVIEW_HIDDEN: "1"
+      BASELINE_NOTES_PREVIEW_HIDDEN: diagnosticShown ? "0" : "1"
     };
     delete env.ELECTRON_RUN_AS_NODE;
     const launchEnv = Object.fromEntries(
@@ -129,14 +136,36 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     const page = await application.firstWindow();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await observeNotesKeys(page);
     await expect(page.locator("h1")).toHaveText("All");
     await expect(page.getByRole("note")).toContainText("Fixture mode");
-    expect(
-      await application.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows().every((window) => !window.isVisible() && !window.isFocused())
-      )
-    ).toBe(true);
+    if (diagnosticShown) {
+      await application.evaluate(({ app, BrowserWindow }) => {
+        app.setActivationPolicy("regular");
+        app.focus({ steal: true });
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.show();
+          window.focus();
+        }
+      });
+      await expect
+        .poll(() =>
+          application!.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows().every(
+              (window) => window.isVisible() && window.isFocused()
+            )
+          )
+        )
+        .toBe(true);
+    } else
+      expect(
+        await application.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows().every(
+            (window) => !window.isVisible() && !window.isFocused()
+          )
+        )
+      ).toBe(true);
+    if (diagnosticTrace) scrollTrace = await startNotesScrollTrace(page);
+    await observeNotesKeys(page, diagnosticTrace);
 
     const store = page.getByRole("button", { name: "Release notes for Store Sample", exact: true });
     await expect(store.locator("svg.lucide-list-checks")).toHaveCount(1);
@@ -231,8 +260,10 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
           }))
         )
       );
+      if (scrollTrace) await scrollTrace.finish("failure").catch(() => undefined);
       throw error;
     }
+    if (scrollTrace) await scrollTrace.finish("pass").catch(() => undefined);
     await page.keyboard.press("Shift+Tab");
     await expect(page.getByRole("button", { name: "Close release notes" })).toBeFocused();
     await page.keyboard.press("Escape");
@@ -321,6 +352,7 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     expect(current.homebrewItems[0]?.installedVersion.raw).toBe("1");
     expect(errors).toEqual([]);
   } finally {
+    if (scrollTrace) await scrollTrace.finish("interrupted").catch(() => undefined);
     if (application) {
       await application.close();
       expect(ownedProcess!.exitCode !== null || ownedProcess!.signalCode !== null).toBe(true);
