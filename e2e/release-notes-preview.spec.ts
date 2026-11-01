@@ -222,8 +222,61 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     await expect
       .poll(() => notesContent.evaluate((node) => node.scrollHeight > node.clientHeight))
       .toBe(true);
+    const scrollState = () =>
+      notesContent.evaluate((node) => ({
+        focused: document.hasFocus(),
+        active: document.activeElement === node,
+        visibility: document.visibilityState,
+        scrollTop: node.scrollTop,
+        scrollHeight: node.scrollHeight,
+        clientHeight: node.clientHeight,
+        rect: node.getBoundingClientRect().toJSON(),
+        overflow: getComputedStyle(node).overflow,
+        animations: node.parentElement?.getAnimations().map((animation) => ({
+          playState: animation.playState,
+          currentTime: animation.currentTime
+        }))
+      }));
+    const beforePageDown = await scrollState();
+    await page.evaluate(() => {
+      const events: object[] = [];
+      Object.assign(globalThis, { notesKeyboardEvents: events });
+      for (const type of ["keydown", "keyup"]) {
+        window.addEventListener(type, (event) => {
+          const key = event as KeyboardEvent;
+          if (key.key !== "PageDown") return;
+          queueMicrotask(() =>
+            events.push({
+              type,
+              key: key.key,
+              code: key.code,
+              trusted: key.isTrusted,
+              prevented: key.defaultPrevented,
+              target: (key.target as Element)?.getAttribute("aria-label"),
+              focused: document.hasFocus()
+            })
+          );
+        });
+      }
+    });
     await page.keyboard.press("PageDown");
-    await expect.poll(() => notesContent.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+    try {
+      await expect.poll(() => notesContent.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+    } catch (error) {
+      await test.info().attach("notes-keyboard-scroll", {
+        body: JSON.stringify({
+          before: beforePageDown,
+          after: await scrollState(),
+          events: await page.evaluate(
+            () =>
+              (globalThis as typeof globalThis & { notesKeyboardEvents?: object[] })
+                .notesKeyboardEvents
+          )
+        }),
+        contentType: "application/json"
+      });
+      throw error;
+    }
     await page.keyboard.press("Shift+Tab");
     await expect(page.getByRole("button", { name: "Close release notes" })).toBeFocused();
     await page.keyboard.press("Escape");
