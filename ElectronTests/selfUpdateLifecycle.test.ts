@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { createServer } from "node:http";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, writeFileSync } from "node:fs";
 import {
   appendFile,
   chmod,
@@ -87,6 +87,7 @@ async function fixture(mode: string) {
   const installed = path.join(root, "installed/Fixture.app");
   const incoming = path.join(root, "incoming/Fixture.app");
   const observed = { feed: 0, archive: 0, completed: 0, redirects: 0 };
+  let archiveReadinessError: Error | undefined;
   const server = createServer((request, response) => {
     if (request.url === "/redirect.zip") {
       observed.redirects++;
@@ -100,7 +101,17 @@ async function fixture(mode: string) {
     }
     if (feed) observed.feed++;
     else observed.archive++;
-    if (!feed && mode === "standard-cancel") return;
+    if (!feed && mode === "standard-cancel") {
+      // A visible Sparkle Cancel button can precede the archive request.
+      // Cancel only once this server has observed the in-progress download.
+      try {
+        writeFileSync(path.join(root, "archive-requested"), "");
+      } catch (error) {
+        archiveReadinessError = error instanceof Error ? error : new Error(String(error));
+        response.destroy();
+      }
+      return;
+    }
     response.setHeader("content-type", feed ? "application/xml" : "application/zip");
     response.on("finish", () => observed.completed++);
     createReadStream(path.join(root, feed ? "appcast.xml" : "update.zip")).pipe(response);
@@ -307,7 +318,8 @@ async function fixture(mode: string) {
     env: {
       ...process.env,
       CFFIXED_USER_HOME: path.join(root, "home"),
-      BASELINE_SELF_UPDATE_FIXTURE_MODE: mode
+      BASELINE_SELF_UPDATE_FIXTURE_MODE: mode,
+      BASELINE_SELF_UPDATE_FIXTURE_ARCHIVE_OBSERVED: path.join(root, "archive-requested")
     }
   });
   processesConfirmed = false;
@@ -370,7 +382,15 @@ async function fixture(mode: string) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   });
-  return { root, installed, observed, launched };
+  return {
+    root,
+    installed,
+    observed,
+    launched,
+    get archiveReadinessError() {
+      return archiveReadinessError;
+    }
+  };
 }
 
 async function waitForOutcome(f: Awaited<ReturnType<typeof fixture>>) {
@@ -431,6 +451,7 @@ describe.skipIf(!enabled)("authenticated isolated Sparkle lifecycle", () => {
         Date.now() < deadline
       )
         await new Promise((resolve) => setTimeout(resolve, 100));
+      if (f.archiveReadinessError) throw f.archiveReadinessError;
       expect(existsSync(path.join(f.root, "completed.json"))).toBe(true);
       await new Promise((resolve) => setTimeout(resolve, 3000));
       expect(existsSync(path.join(f.root, "prepare.json"))).toBe(false);
@@ -439,6 +460,9 @@ describe.skipIf(!enabled)("authenticated isolated Sparkle lifecycle", () => {
           "fixture: standard UI cancel download"
         );
         expect(f.observed.archive).toBeGreaterThan(0);
+        expect(await readFile(path.join(f.root, "helper-error.log"), "utf8")).toMatch(
+          /fixture: archive request observed before cancel\nfixture: standard UI cancel download/
+        );
       }
       expect(existsSync(path.join(f.root, "relaunched.json"))).toBe(false);
       expect(
