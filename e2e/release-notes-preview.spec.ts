@@ -126,6 +126,11 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     ownedProcess = application.process();
     console.log(`Owned hidden preview PID ${ownedProcess.pid}: ${entry}`);
     const page = await application.firstWindow();
+    // A hidden native window has no OS focus. Emulate Chromium page focus so
+    // keyboard default actions run without showing or activating the fixture.
+    const session = await page.context().newCDPSession(page);
+    await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+    await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true);
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await expect(page.locator("h1")).toHaveText("All");
@@ -214,6 +219,9 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     await page.keyboard.press("Tab");
     const notesContent = page.getByLabel("Release notes content", { exact: true });
     await expect(notesContent).toBeFocused();
+    await expect
+      .poll(() => notesContent.evaluate((node) => node.scrollHeight > node.clientHeight))
+      .toBe(true);
     await page.keyboard.press("PageDown");
     await expect.poll(() => notesContent.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
     await page.keyboard.press("Shift+Tab");
