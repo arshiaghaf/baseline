@@ -85,6 +85,9 @@ test("packaged CLI works with no user Node, no windows, concurrent GUI-backend r
       args: ["--baseline-cli-background"],
       env
     });
+    await app.evaluate(async ({ app }) => {
+      await app.whenReady();
+    });
     await expect
       .poll(async () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length))
       .toBe(0);
