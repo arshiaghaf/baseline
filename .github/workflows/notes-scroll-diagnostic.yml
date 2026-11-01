@@ -45,16 +45,24 @@ jobs:
       - run: npm ci
       - run: node -e 'require("electron")'
       - run: npm run prepare:sparkle
-      - run: npm run build
+      - name: Package app
+        id: package
+        run: npm run build
       - name: Record renderer artifacts
         run: shasum -a 256 .vite/renderer/main_window/assets/*
-      - name: Original hidden keyboard flow with after-failure probes
-        run: npm run test:electron -- e2e/release-notes-preview.spec.ts --repeat-each=5 --output=test-results/notes-scroll
+      - name: Prior focused Electron lifecycle context
+        run: npm run test:electron -- --grep "keeps hidden-Dock settings reachable|narrow operation notice wraps" --output=test-results/lifecycle-prefix
+      - name: Original-order full Electron suite control
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: npm run test:electron -- --output=test-results/original-order-full
+      - name: Standalone original hidden flow with after-failure probes
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: npm run test:electron -- e2e/release-notes-preview.spec.ts --repeat-each=5 --output=test-results/standalone-notes
       - name: Retain diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: notes-scroll-${{ matrix.os }}-${{ matrix.dependencies }}-${{ github.run_id }}
-          path: test-results/notes-scroll/
+          path: test-results/
           if-no-files-found: ignore
           retention-days: 7

@@ -220,7 +220,17 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     try {
       await expect.poll(() => notesContent.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
     } catch (error) {
-      await captureNotesScrollFailure(page, notesContent);
+      await captureNotesScrollFailure(page, notesContent, () =>
+        application!.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows().map((window) => ({
+            id: window.id,
+            visible: window.isVisible(),
+            focused: window.isFocused(),
+            webContentsFocused: window.webContents.isFocused(),
+            backgroundThrottling: window.webContents.getBackgroundThrottling()
+          }))
+        )
+      );
       throw error;
     }
     await page.keyboard.press("Shift+Tab");

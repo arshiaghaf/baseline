@@ -6,7 +6,7 @@ import { test, type Locator, type Page } from "@playwright/test";
 export async function observeNotesKeys(page: Page): Promise<void> {
   // Register before the flow begins; do not add layout reads around the key.
   await page.evaluate(() => {
-    const events: object[] = [];
+    const events: { snapshot: object; event: KeyboardEvent }[] = [];
     const identities = new WeakMap<Element, number>();
     let nextIdentity = 0;
     const identity = (element: Element) => {
@@ -17,7 +17,14 @@ export async function observeNotesKeys(page: Page): Promise<void> {
       }
       return value;
     };
-    Object.assign(globalThis, { notesScrollKeys: events, notesScrollIdentity: identity });
+    Object.assign(globalThis, {
+      notesScrollKeys: () =>
+        events.map(({ snapshot, event }) => ({
+          ...snapshot,
+          finalPrevented: event.defaultPrevented
+        })),
+      notesScrollIdentity: identity
+    });
     for (const type of ["keydown", "keyup"]) {
       for (const capture of [true, false])
         window.addEventListener(
@@ -45,7 +52,10 @@ export async function observeNotesKeys(page: Page): Promise<void> {
               focused: document.hasFocus(),
               time: performance.now()
             };
-            events.push({ ...entry, prevented: key.defaultPrevented });
+            events.push({
+              snapshot: { ...entry, preventedAtPhase: key.defaultPrevented },
+              event: key
+            });
           },
           capture
         );
@@ -53,51 +63,61 @@ export async function observeNotesKeys(page: Page): Promise<void> {
   });
 }
 
-export async function captureNotesScrollFailure(page: Page, notes: Locator): Promise<void> {
+export async function captureNotesScrollFailure(
+  page: Page,
+  notes: Locator,
+  nativeState: () => Promise<unknown>
+): Promise<void> {
   const evidence: Record<string, unknown> = {};
   const state = () =>
-    notes.evaluate((node) => {
-      const identify = (element: Element) => ({
-        objectIdentity: (
-          globalThis as typeof globalThis & {
-            notesScrollIdentity?: (element: Element) => number;
-          }
-        ).notesScrollIdentity?.(element),
-        tag: element.tagName,
-        id: element.id,
-        label: element.getAttribute("aria-label"),
-        className: element.className,
-        connected: element.isConnected,
-        rect: element.getBoundingClientRect().toJSON(),
-        top: element.scrollTop,
-        left: element.scrollLeft,
-        height: element.scrollHeight,
-        clientHeight: element.clientHeight,
-        width: element.scrollWidth,
-        clientWidth: element.clientWidth,
-        overflowX: getComputedStyle(element).overflowX,
-        overflowY: getComputedStyle(element).overflowY
-      });
-      const ancestors = [];
-      for (let parent = node.parentElement; parent; parent = parent.parentElement)
-        ancestors.push(identify(parent));
-      return {
-        target: identify(node),
-        ancestors,
-        active: document.activeElement ? identify(document.activeElement) : null,
-        documentScroll: document.scrollingElement ? identify(document.scrollingElement) : null,
-        windowScroll: { x: scrollX, y: scrollY },
-        focused: document.hasFocus(),
-        visibility: document.visibilityState,
-        time: performance.now(),
-        keys: (globalThis as typeof globalThis & { notesScrollKeys?: object[] }).notesScrollKeys,
-        // CSS/Web Animations only; this does not expose Chromium scroll animation.
-        animations: node.parentElement?.getAnimations().map((animation) => ({
-          playState: animation.playState,
-          currentTime: animation.currentTime
-        }))
-      };
-    });
+    notes.evaluate(
+      (node) => {
+        const identify = (element: Element) => ({
+          objectIdentity: (
+            globalThis as typeof globalThis & {
+              notesScrollIdentity?: (element: Element) => number;
+            }
+          ).notesScrollIdentity?.(element),
+          tag: element.tagName,
+          id: element.id,
+          label: element.getAttribute("aria-label"),
+          className: element.className,
+          connected: element.isConnected,
+          rect: element.getBoundingClientRect().toJSON(),
+          top: element.scrollTop,
+          left: element.scrollLeft,
+          height: element.scrollHeight,
+          clientHeight: element.clientHeight,
+          width: element.scrollWidth,
+          clientWidth: element.clientWidth,
+          overflowX: getComputedStyle(element).overflowX,
+          overflowY: getComputedStyle(element).overflowY
+        });
+        const ancestors = [];
+        for (let parent = node.parentElement; parent; parent = parent.parentElement)
+          ancestors.push(identify(parent));
+        return {
+          target: identify(node),
+          ancestors,
+          active: document.activeElement ? identify(document.activeElement) : null,
+          documentScroll: document.scrollingElement ? identify(document.scrollingElement) : null,
+          windowScroll: { x: scrollX, y: scrollY },
+          focused: document.hasFocus(),
+          visibility: document.visibilityState,
+          time: performance.now(),
+          keys: (
+            globalThis as typeof globalThis & { notesScrollKeys?: () => object[] }
+          ).notesScrollKeys?.(),
+          // CSS/Web Animations only; this does not expose Chromium scroll animation.
+          animations: node.parentElement?.getAnimations().map((animation) => ({
+            playState: animation.playState,
+            currentTime: animation.currentTime
+          }))
+        };
+      },
+      undefined,
+      { timeout: 1000 }
+    );
   const frame = () =>
     page.evaluate(
       () =>
@@ -116,25 +136,36 @@ export async function captureNotesScrollFailure(page: Page, notes: Locator): Pro
     );
   try {
     evidence.originalFailure = await state();
+    evidence.nativeAtFailure = await nativeState();
     evidence.firstFrame = await frame();
-    evidence.afterFrame = await state();
+    evidence.afterFrameImmediate = await state();
+    await page.waitForTimeout(250);
+    evidence.afterFramePassive = await state();
+    evidence.secondFrame = await frame();
+    await page.waitForTimeout(250);
+    evidence.afterSecondFramePassive = await state();
     // A screenshot forces frame production: only intervene AFTER preserving failure.
     await test.info().attach("notes-after-original-failure", {
       body: await page.screenshot({ timeout: 5000 }),
       contentType: "image/png"
     });
-    evidence.afterScreenshot = await state();
+    evidence.afterScreenshotImmediate = await state();
+    await page.waitForTimeout(250);
+    evidence.afterScreenshotPassive = await state();
     await page.keyboard.press("PageDown");
     await page.waitForTimeout(250);
     evidence.secondPageDown = await state();
     await page.keyboard.press("ArrowDown");
     await page.waitForTimeout(250);
     evidence.arrowDown = await state();
-    await notes.evaluate((node) =>
-      node.scrollTo({
-        top: Math.min(node.clientHeight, node.scrollHeight - node.clientHeight),
-        behavior: "instant"
-      })
+    await notes.evaluate(
+      (node) =>
+        node.scrollTo({
+          top: Math.min(node.clientHeight, node.scrollHeight - node.clientHeight),
+          behavior: "instant"
+        }),
+      undefined,
+      { timeout: 1000 }
     );
     evidence.instantProgrammaticProbe = await state();
   } catch (error) {
