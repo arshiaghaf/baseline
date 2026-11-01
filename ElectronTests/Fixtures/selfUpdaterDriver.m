@@ -47,12 +47,27 @@ static NSButton *fixtureButton(NSView *view, BOOL install) {
 void BaselineFixtureDriveStandardCancellation(void) {
     __block BOOL installedChoice = NO;
     __block NSUInteger attempts = 0;
+    __block BOOL waitingLogged = NO;
+    NSString *archiveObserved = NSProcessInfo.processInfo.environment[@"BASELINE_SELF_UPDATE_FIXTURE_ARCHIVE_OBSERVED"];
     [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer) {
-        if (++attempts > 100) { [timer invalidate]; return; }
+        if (++attempts > 100) {
+            fprintf(stderr, "fixture: standard cancellation timed out before %s\n", installedChoice ? "archive-ready Cancel" : "Install Update");
+            [timer invalidate];
+            [NSApp terminate:nil];
+            return;
+        }
         for (NSWindow *window in NSApp.windows) {
             if (!window.visible) continue;
             NSButton *button = fixtureButton(window.contentView, !installedChoice);
             if (!button) continue;
+            if (installedChoice && (!archiveObserved.length || ![NSFileManager.defaultManager fileExistsAtPath:archiveObserved])) {
+                if (!waitingLogged) {
+                    fprintf(stderr, "fixture: waiting for archive request before cancel\n");
+                    waitingLogged = YES;
+                }
+                continue;
+            }
+            if (installedChoice) fprintf(stderr, "fixture: archive request observed before cancel\n");
             fprintf(stderr, "fixture: standard UI %s\n", installedChoice ? "cancel download" : "install choice");
             BOOL cancelling = installedChoice;
             installedChoice = YES;
