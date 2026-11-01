@@ -166,7 +166,7 @@ it("keeps saved IDs, ignored state, pins and history through a cold-load incompl
     displayName: b.name,
     fromVersion: version("0"),
     toVersion: version("1"),
-    updatedAt: "2026-10-18T00:00:00.000Z"
+    updatedAt: new Date().toISOString()
   };
   let inventory = [missing(newA), b];
   const { store, persistence, options } = await fixture(
