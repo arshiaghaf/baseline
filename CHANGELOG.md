@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.12.0 — 2026-11-02
+
+### Highlights
+
+- **Read what changes before updating.** Open publisher release notes beside an update's version, where notes are available for that selected release. ([#374](https://github.com/arshiaghaf/baseline/pull/374)), ([#375](https://github.com/arshiaghaf/baseline/pull/375))
+- **See your Homebrew version changes.** `Installed` shows saved before-and-after versions and when the update happened, including in search results. ([#371](https://github.com/arshiaghaf/baseline/pull/371))
+- **Keep credit for completed Homebrew updates.** A later maintenance error no longer makes an already completed update appear to have failed. ([#372](https://github.com/arshiaghaf/baseline/pull/372))
+- **Count confirmed App Store updates.** Update totals and completed status now require an observed version or build increase. ([#373](https://github.com/arshiaghaf/baseline/pull/373))
+
+### Added
+
+- Installed Homebrew cards and search results show saved version transitions and relative update times when package kind and current version match. Missing, stale, or unreported `latest` pairs retain the installed version; equal versions show `Version unchanged`, pinned updates retain their target, and long pairs wrap. Existing 14-day/40-item history retention is unchanged. ([#371](https://github.com/arshiaghaf/baseline/pull/371))
+- Release-note previews open after a 600 ms name/version hover or immediately from the accessible `Release notes` button, with scrolling in full, compact, and search layouts. Keyboard focus stays within the owning search palette, Escape closes notes first, and dismissal, navigation, or changed targets cancel pending reads and ignore stale results. Known unsupported or empty sources omit the control; remote coverage resolves lazily, confirmed missing notes hide it until the source changes, and transient errors remain retryable. ([#375](https://github.com/arshiaghaf/baseline/pull/375))
+- Notes resolve only for the selected target release, preserving Sparkle inline formats and App Store summaries, with official Homebrew packages mapped to explicit upstream GitHub releases and exact tags. Missing or ambiguous sources remain unavailable; package recipe history and a rollup of intervening releases are not substituted. Credentialless main-process fetching validates public HTTPS, DNS, and redirects, bounds time, bytes, and caches, and renders inert text through htmlparser2. Typed requests reject stale targets and scope cancellation to the requesting window; no publisher source-link footer is added. ([#374](https://github.com/arshiaghaf/baseline/pull/374)), ([#375](https://github.com/arshiaghaf/baseline/pull/375))
+- A documented isolated Electron preview uses labelled sample inventory, real public notes by default, a dedicated profile, and disabled app/package mutations, without changing installed software or ordinary settings. ([#375](https://github.com/arshiaghaf/baseline/pull/375))
+- Contributor setup, CI, release builds, and the signed-update workflow example share the Node 24.22.2 version pinned in `.node-version`. ([455c1fb](https://github.com/arshiaghaf/baseline/commit/455c1fbea25392b02c194e7ecbcefec9df3e04b9))
+
+### Fixed
+
+- Explicit formula/cask installation completion survives a later single or one-entry queued Homebrew command failure, retaining completed history and pending Updated state while reporting the later failure separately as maintenance evidence. Commands without installation evidence retain package-failure behavior; same-version rebuilds remain supported, and history-save or refresh failures still reconcile installed packages and release operation locks. ([#372](https://github.com/arshiaghaf/baseline/pull/372))
+- Successful App Store helper commands require an observed installed version or build increase before recording completion statistics or Updated state. Unchanged, missing, replaced, or unreadable apps retain an unconfirmed-result notice without automatic retry or handoff. Operations remain active through reconciliation and history saving, preserving build-only updates, failure/readiness fallback, concurrent-action deduplication, quit fencing, and visible confirmed-history save failures. ([#373](https://github.com/arshiaghaf/baseline/pull/373))
+- Migration and recovery history fixtures use current timestamps so their assertions do not expire outside the existing retention window. ([#380](https://github.com/arshiaghaf/baseline/pull/380))
+- The windowless CLI smoke fixture waits for Electron readiness before accessing native window APIs, avoiding incomplete startup exports. ([#380](https://github.com/arshiaghaf/baseline/pull/380))
+- Native updater cancellation fixtures wait for the archive request before cancelling, preventing an early cancel from producing a false download failure. Readiness errors and timeouts remain explicit, with no-install, no-relaunch, unchanged-version, and request-order assertions preserved. ([#383](https://github.com/arshiaghaf/baseline/pull/383))
+
 ## 0.11.0 — 2026-10-28
 
 ### Highlights
