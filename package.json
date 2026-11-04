@@ -1,6 +1,6 @@
 {
   "name": "baseline",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Baseline is a standalone macOS Electron app for finding app updates through public update sources.",
   "main": ".vite/build/main.js",
   "scripts": {
@@ -52,11 +52,11 @@
   },
   "devDependencies": {
     "@electron-forge/cli": "^8.0.1",
-    "@electron-forge/maker-dmg": "^7.11.2",
+    "@electron-forge/maker-dmg": "^8.0.1",
     "@electron-forge/maker-zip": "^7.11.2",
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron/asar": "^3.4.1",
-    "@electron/osx-sign": "^1.3.3",
+    "@electron/osx-sign": "^2.7.2",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.64.1",
     "@tailwindcss/postcss": "^4.3.3",
@@ -67,18 +67,18 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "@vitest/ui": "^5.0.5",
-    "autoprefixer": "^10.6.1",
+    "autoprefixer": "^10.6.2",
     "electron": "^44.9.2",
     "electron-installer-dmg": "^5.0.1",
     "eslint": "^10.13.0",
     "image-size": "file:build-support/image-size-compat",
     "jsdom": "^30.1.3",
-    "postcss": "^8.5.31",
+    "postcss": "^8.5.32",
     "prettier": "^3.9.10",
     "tailwindcss": "^4.3.3",
     "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.72.0",
+    "typescript-eslint": "^8.72.1",
     "vite": "^8.3.5",
     "vitest": "^5.0.0"
   }

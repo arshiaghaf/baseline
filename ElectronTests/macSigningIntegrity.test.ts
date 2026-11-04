@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // @vitest-environment node
 
-import { signAsync } from "@electron/osx-sign";
+import { sign } from "@electron/osx-sign";
 import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -39,7 +39,7 @@ describe.skipIf(process.platform !== "darwin")("real ad-hoc resource seals", () 
       );
       await writeFile(path.join(contents, "Resources/fixture.txt"), "sealed fixture");
     }
-    await signAsync({ app, platform: "darwin", ...localAdHocSigningOptions() });
+    await sign({ app, platform: "darwin", ...localAdHocSigningOptions() });
   });
 
   afterEach(async () => {
