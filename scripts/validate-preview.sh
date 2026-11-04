@@ -20,18 +20,25 @@ cd "$ROOT_DIR"
 
 cleanup_mount() {
   if [[ -n "$MOUNT_DIR" && -d "$MOUNT_DIR" ]]; then
-    hdiutil detach "$MOUNT_DIR" -quiet >/dev/null 2>&1 || true
-    rm -rf "$MOUNT_DIR"
+    if ! hdiutil detach "$MOUNT_DIR" -quiet; then
+      echo "Could not detach $MOUNT_DIR; retaining mount and install lock for inspection." >&2
+      return 1
+    fi
+    rmdir "$MOUNT_DIR" || return 1
   fi
 }
 
 source "$ROOT_DIR/scripts/preview-install.sh"
 TRANSACTION_DIR=""
 PREVIEW_PID=""
-PREVIEW_LAUNCH_STARTED=false
 cleanup_preview() {
-  if [[ -n "$TRANSACTION_DIR" ]]; then recover_preview; fi
-  cleanup_mount
+  if [[ -n "$TRANSACTION_DIR" ]]; then
+    if ! cleanup_preview_install; then
+      echo "Preview shutdown is unconfirmed; retaining mount, staging, and install lock for inspection." >&2
+      return 1
+    fi
+  fi
+  cleanup_mount || return 1
   if [[ "${INSTALL_LOCK_HELD:-false}" == true ]]; then rmdir "$INSTALL_LOCK"; fi
 }
 trap cleanup_preview EXIT

@@ -23,12 +23,11 @@ source "$HELPER"
 INSTALL_PATH="$FIXTURE/installed.app"
 TRANSACTION_DIR="$FIXTURE/transaction"
 PREVIEW_PID=""
-PREVIEW_LAUNCH_STARTED=false
-trap recover_preview EXIT
+trap cleanup_preview_install EXIT
 # Installation tests use real temporary files, with all signing/launch/host effects mocked.
 verify_preview_bundle() { [[ -f "$1/marker" ]]; }
 require_app_stopped() { return 0; }
-smoke_launch_app() { PREVIEW_LAUNCH_STARTED=true; return 0; }
+smoke_launch_app() { return 0; }
 ditto() { cp -R "$1" "$2"; }
 ${body}`
     ],
@@ -54,7 +53,7 @@ function check(body: string, assertions: (value: ReturnType<typeof fixture>) => 
   }
 }
 
-describe("recoverable preview replacement", () => {
+describe("staged preview replacement", () => {
   it.each([0, 5000])(
     "refuses a running target in a large process list (target index %s)",
     (targetIndex) => {
@@ -97,32 +96,6 @@ install_preview "$FIXTURE/source.app"`,
     );
   });
 
-  it.each(["return 74", "exit 143"])(
-    "retains recovery for compatibility review after mounted smoke and promotion failure (%s)",
-    (failure) => {
-      check(
-        `
-source "$HELPER"
-verify_preview_bundle() { [[ -f "$1/marker" ]]; }
-require_app_stopped() { :; }
-canonical_executable() { printf '/usr/bin/true\n'; }
-process_identity() { printf 'start /usr/bin/true\n'; }
-sleep() { printf migrated-by-preview > "$FIXTURE/synthetic-user-data"; }
-stop_owned_preview() { if [[ -n "$PREVIEW_PID" ]]; then wait "$PREVIEW_PID" 2>/dev/null || true; PREVIEW_PID=""; fi; }
-smoke_launch_app "$FIXTURE/source.app" mounted
-mv() { if [[ "$2" == "$TRANSACTION_DIR/staged/installed.app" ]]; then ${failure}; fi; command mv "$@"; }
-install_preview "$FIXTURE/source.app"`,
-        (value) => {
-          expect(value.result.status).not.toBe(0);
-          expect(value.exists("installed.app")).toBe(false);
-          expect(value.read("transaction/previous/installed.app/marker")).toBe("previous");
-          expect(value.read("synthetic-user-data")).toBe("migrated-by-preview");
-          expect(value.result.stdout).toContain("does not reverse user-data migrations");
-        }
-      );
-    }
-  );
-
   it("keeps the installed bundle intact when copying fails after a partial write", () => {
     check(
       'ditto() { mkdir "$2"; printf partial > "$2/marker"; return 74; }; install_preview "$FIXTURE/source.app"',
@@ -134,7 +107,7 @@ install_preview "$FIXTURE/source.app"`,
     );
   });
 
-  it("rejects an invalid staged bundle before moving the previous app", () => {
+  it("rejects an invalid staged bundle before removing the previous app", () => {
     check(
       'verify_preview_bundle() { [[ "$1" != "$TRANSACTION_DIR/staged/installed.app" ]]; }; install_preview "$FIXTURE/source.app"',
       (value) => {
@@ -145,17 +118,55 @@ install_preview "$FIXTURE/source.app"`,
   });
 
   it.each(["return 74", "exit 143"])(
-    "restores the old bundle on promotion failure (%s)",
+    "retains the verified new bundle on promotion failure (%s)",
     (failure) => {
       check(
         `mv() { if [[ "$1" == -n && "$2" == "$TRANSACTION_DIR/staged/installed.app" ]]; then ${failure}; fi; command mv "$@"; }; install_preview "$FIXTURE/source.app"`,
         (value) => {
           expect(value.result.status).not.toBe(0);
-          expect(value.read("installed.app/marker")).toBe("previous");
+          expect(value.exists("installed.app")).toBe(false);
+          expect(value.read("transaction/staged/installed.app/marker")).toBe("preview");
+          expect(value.exists("transaction/previous")).toBe(false);
         }
       );
     }
   );
+
+  it("leaves the old bundle intact when staging is interrupted", () => {
+    check(
+      'ditto() { cp -R "$1" "$2"; exit 143; }; install_preview "$FIXTURE/source.app"',
+      (value) => {
+        expect(value.result.status).toBe(143);
+        expect(value.read("installed.app/marker")).toBe("previous");
+        expect(value.read("transaction/staged/installed.app/marker")).toBe("preview");
+        expect(value.exists("transaction/previous")).toBe(false);
+      }
+    );
+  });
+
+  it("does not promote or launch when removing the old bundle fails", () => {
+    check(
+      'rm() { return 74; }; smoke_launch_app() { echo UNEXPECTED_LAUNCH; }; install_preview "$FIXTURE/source.app"',
+      (value) => {
+        expect(value.result.status).toBe(1);
+        expect(value.read("installed.app/marker")).toBe("previous");
+        expect(value.read("transaction/staged/installed.app/marker")).toBe("preview");
+        expect(value.result.stdout).not.toContain("UNEXPECTED_LAUNCH");
+      }
+    );
+  });
+
+  it("preserves unrelated profile data through replacement and launch failure", () => {
+    check(
+      'printf saved > "$FIXTURE/profile-data"; smoke_launch_app() { return 1; }; install_preview "$FIXTURE/source.app"',
+      (value) => {
+        expect(value.result.status).toBe(1);
+        expect(value.read("profile-data")).toBe("saved");
+        expect(value.read("installed.app/marker")).toBe("preview");
+        expect(value.exists("transaction/previous")).toBe(false);
+      }
+    );
+  });
 
   it("does not overwrite a target that appears during promotion", () => {
     check(
@@ -163,28 +174,24 @@ install_preview "$FIXTURE/source.app"`,
       (value) => {
         expect(value.result.status).toBe(1);
         expect(value.read("installed.app/marker")).toBe("concurrent");
-        expect(value.read("transaction/previous/installed.app/marker")).toBe("previous");
+        expect(value.exists("transaction/previous")).toBe(false);
       }
     );
   });
 
-  it("retains recovery after a failed installed launch without claiming to reverse migrations", () => {
-    check(
-      'smoke_launch_app() { PREVIEW_LAUNCH_STARTED=true; return 1; }; install_preview "$FIXTURE/source.app"',
-      (value) => {
-        expect(value.result.status).toBe(1);
-        expect(value.read("installed.app/marker")).toBe("preview");
-        expect(value.read("transaction/previous/installed.app/marker")).toBe("previous");
-        expect(value.result.stdout).toContain("does not reverse user-data migrations");
-      }
-    );
+  it("retains the new installation after a failed launch without retaining the old bundle", () => {
+    check('smoke_launch_app() { return 1; }; install_preview "$FIXTURE/source.app"', (value) => {
+      expect(value.result.status).toBe(1);
+      expect(value.read("installed.app/marker")).toBe("preview");
+      expect(value.exists("transaction/previous")).toBe(false);
+    });
   });
 
-  it("installs a verified copy and keeps its recovery bundle", () => {
+  it("installs a verified copy without keeping an old bundle", () => {
     check('install_preview "$FIXTURE/source.app"', (value) => {
       expect(value.result.status).toBe(0);
       expect(value.read("installed.app/marker")).toBe("preview");
-      expect(value.read("transaction/previous/installed.app/marker")).toBe("previous");
+      expect(value.exists("transaction/previous")).toBe(false);
     });
   });
 });
@@ -241,6 +248,17 @@ stop_owned_preview`);
     expect(result.stderr).toContain("No force signal was sent");
   });
 
+  it("confirms an owned smoke process exited after graceful shutdown", () => {
+    const result = processFixture(`
+PREVIEW_PID=123; PREVIEW_IDENTITY='old-start /owned/Baseline'; stopped=false
+ps() { if [[ "$stopped" == true ]]; then return 1; fi; printf '%s\\n' "$PREVIEW_IDENTITY"; }
+kill() { printf 'signal %s\\n' "$*"; stopped=true; }
+stop_owned_preview
+[[ -z "$PREVIEW_PID" ]]`);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("signal -TERM 123");
+  });
+
   it("waits for its launched child to exec and leaves a successful installed preview running", () => {
     const result = processFixture(`
 canonical_executable() { printf '/usr/bin/true\n'; }
@@ -254,7 +272,7 @@ ps() {
 sleep() { :; }
 kill() { echo UNEXPECTED_SIGNAL; }
 smoke_launch_app /fixture/app fixture true
-[[ -z "$PREVIEW_PID" && "$PREVIEW_LAUNCH_STARTED" == true ]]`);
+[[ -z "$PREVIEW_PID" ]]`);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Smoke launch succeeded");
     expect(result.stdout).not.toContain("UNEXPECTED_SIGNAL");

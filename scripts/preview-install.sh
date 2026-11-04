@@ -57,9 +57,6 @@ smoke_launch_app() {
   executable="$(canonical_executable "$app_path")" || return 1
   require_app_stopped "$app_path" || return 1
   echo "Launching $label"
-  # Mounted smoke also uses the ordinary profile and may persist migrations.
-  # Set this before spawning, including failed or interrupted startup attempts.
-  PREVIEW_LAUNCH_STARTED=true
   "$executable" >"$TRANSACTION_DIR/preview-launch.log" 2>&1 &
   PREVIEW_PID=$!
   PREVIEW_IDENTITY=""
@@ -113,14 +110,15 @@ install_preview() {
   local source="$1" app_name staged
   app_name="$(basename "$INSTALL_PATH")"
   staged="$TRANSACTION_DIR/staged/$app_name"
-  mkdir "$TRANSACTION_DIR/staged" "$TRANSACTION_DIR/previous" || return 1
+  mkdir "$TRANSACTION_DIR/staged" || return 1
   verify_preview_bundle "$source" "$source" || return 1
   ditto "$source" "$staged" || return 1
   verify_preview_bundle "$staged" "$source" || return 1
   if [[ -e "$INSTALL_PATH" || -L "$INSTALL_PATH" ]]; then
     [[ -d "$INSTALL_PATH" && ! -L "$INSTALL_PATH" ]] || return 1
     require_app_stopped "$INSTALL_PATH" || return 1
-    mv -n "$INSTALL_PATH" "$TRANSACTION_DIR/previous/" || return 1
+    # The verified replacement is ready. Do not retain an old-app rollback copy.
+    rm -rf "$INSTALL_PATH" || return 1
     [[ ! -e "$INSTALL_PATH" && ! -L "$INSTALL_PATH" ]] || return 1
   fi
   # Pass the parent directory so mv -n refuses an existing app rather than
@@ -131,13 +129,10 @@ install_preview() {
   smoke_launch_app "$INSTALL_PATH" "installed preview app" true || return 1
 }
 
-recover_preview() {
-  stop_owned_preview || true
-  if [[ "${PREVIEW_LAUNCH_STARTED:-false}" != true && -d "$TRANSACTION_DIR/previous/$(basename "$INSTALL_PATH")" && ! -e "$INSTALL_PATH" && ! -L "$INSTALL_PATH" ]]; then
-    mv -n "$TRANSACTION_DIR/previous/$(basename "$INSTALL_PATH")" "$(dirname "$INSTALL_PATH")/" || true
-  fi
-  if [[ -d "$TRANSACTION_DIR/previous/$(basename "$INSTALL_PATH")" ]]; then
-    echo "Previous app retained at $TRANSACTION_DIR/previous/$(basename "$INSTALL_PATH"). Bundle recovery does not reverse user-data migrations."
-  fi
+cleanup_preview_install() {
+  stop_owned_preview || return 1
   echo "Preview staging and launch log: $TRANSACTION_DIR"
+  if [[ -d "$TRANSACTION_DIR/staged/$(basename "$INSTALL_PATH")" ]]; then
+    echo "Staged replacement retained. If promotion failed, the installation may be absent; inspect before retrying."
+  fi
 }
