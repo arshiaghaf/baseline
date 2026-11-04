@@ -83,6 +83,14 @@ test("welcome chapters, reduced motion, keyboard, interruption and replay", asyn
     await expect.poll(transform).not.toBe(initialTransform);
     await page.getByRole("button", { name: "Pause motion" }).click();
     await expect(page.locator(".welcome-shadow")).toHaveCSS("animation-play-state", "paused");
+    // CSS pause is a pending animation operation until the next animation tick.
+    // Wait for that operation before taking the stability baseline.
+    await orbit.evaluate(async (node) => {
+      const animations = node.getAnimations();
+      if (animations.length !== 1) throw new Error("Expected the icon orbit animation");
+      await Promise.all(animations.map((animation) => animation.ready));
+    });
+    await expect(orbit).toHaveCSS("animation-play-state", "paused");
     const pausedTransform = await transform();
     await orbit.evaluate(async () => {
       for (let frame = 0; frame < 8; frame++) {
