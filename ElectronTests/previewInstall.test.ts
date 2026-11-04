@@ -248,11 +248,66 @@ stop_owned_preview`);
     expect(result.stderr).toContain("No force signal was sent");
   });
 
+  it.each(["before TERM", "after TERM"])(
+    "retains ownership when process inspection fails %s and exit is unconfirmed",
+    (phase) => {
+      for (const probeStatus of [1, 2, 127]) {
+        const result = processFixture(`
+PREVIEW_PID=123; PREVIEW_IDENTITY='old-start /owned/Baseline'; signalled=false
+ps() {
+  if [[ '${phase}' == 'before TERM' || "$signalled" == true ]]; then return 1; fi
+  printf '%s\\n' "$PREVIEW_IDENTITY"
+}
+process_has_exited() { return ${probeStatus}; }
+kill() { printf 'signal %s\\n' "$*"; signalled=true; }
+if stop_owned_preview; then echo FALSE_EXIT; fi
+[[ "$PREVIEW_PID" == 123 ]]`);
+        expect(result.status).toBe(0);
+        expect(result.stdout).not.toContain("FALSE_EXIT");
+        expect(result.stdout).toBe(phase === "after TERM" ? "signal -TERM 123\n" : "");
+        expect(result.stderr).toContain("could not be confirmed");
+      }
+    }
+  );
+
+  it.each(["alive", "ESRCH", "EPERM", "unknown"])(
+    "only treats ESRCH as a confirmed exit (%s)",
+    (outcome) => {
+      const result = processFixture(`
+node() {
+  command node -e '
+    const script = process.argv.splice(1, 1)[0];
+    process.kill = (pid, signal) => {
+      if (pid !== 123 || signal !== 0) throw new Error("unexpected probe");
+      if ("${outcome}" === "alive") return true;
+      throw Object.assign(new Error("synthetic probe"), { code: "${outcome}" });
+    };
+    eval(script);
+  ' "$2" "$3"
+}
+process_has_exited 123`);
+      expect(result.status).toBe(outcome === "ESRCH" ? 0 : 1);
+    }
+  );
+
+  it("accepts a separately confirmed exit without signalling", () => {
+    const result = processFixture(`
+PREVIEW_PID=123; PREVIEW_IDENTITY='old-start /owned/Baseline'
+ps() { return 1; }
+process_has_exited() { return 0; }
+kill() { echo UNEXPECTED_SIGNAL; }
+stop_owned_preview
+[[ -z "$PREVIEW_PID" ]]`);
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("UNEXPECTED_SIGNAL");
+  });
+
   it("confirms an owned smoke process exited after graceful shutdown", () => {
     const result = processFixture(`
 PREVIEW_PID=123; PREVIEW_IDENTITY='old-start /owned/Baseline'; stopped=false
 ps() { if [[ "$stopped" == true ]]; then return 1; fi; printf '%s\\n' "$PREVIEW_IDENTITY"; }
 kill() { printf 'signal %s\\n' "$*"; stopped=true; }
+process_has_exited() { [[ "$stopped" == true ]]; }
 stop_owned_preview
 [[ -z "$PREVIEW_PID" ]]`);
     expect(result.status).toBe(0);

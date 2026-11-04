@@ -30,10 +30,35 @@ require_app_stopped() {
   return 0
 }
 
+process_has_exited() {
+  # ps failure can mean unreadable process state. Only ESRCH proves absence;
+  # permission errors, a live process and an unavailable probe remain uncertain.
+  node -e '
+    const pid = Number(process.argv[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 0) process.exit(1);
+    try {
+      process.kill(pid, 0);
+      process.exit(1);
+    } catch (error) {
+      process.exit(error.code === "ESRCH" ? 0 : 1);
+    }
+  ' "$1"
+}
+
+confirm_preview_exit() {
+  if process_has_exited "$PREVIEW_PID"; then
+    wait "$PREVIEW_PID" 2>/dev/null || true
+    PREVIEW_PID=""
+    return 0
+  fi
+  echo "Preview exit could not be confirmed for PID $PREVIEW_PID; retaining ownership for inspection." >&2
+  return 1
+}
+
 stop_owned_preview() {
   [[ -n "${PREVIEW_PID:-}" ]] || return 0
   local current
-  current="$(process_identity "$PREVIEW_PID")" || { PREVIEW_PID=""; return 0; }
+  current="$(process_identity "$PREVIEW_PID")" || { confirm_preview_exit && return 0; return 1; }
   if [[ "$current" != "$PREVIEW_IDENTITY" ]]; then
     echo "Preview process identity changed; refusing to signal PID $PREVIEW_PID." >&2
     PREVIEW_PID=""
@@ -41,7 +66,7 @@ stop_owned_preview() {
   fi
   kill -TERM "$PREVIEW_PID" || return 1
   for _ in {1..40}; do
-    current="$(process_identity "$PREVIEW_PID")" || { wait "$PREVIEW_PID" 2>/dev/null || true; PREVIEW_PID=""; return 0; }
+    current="$(process_identity "$PREVIEW_PID")" || { confirm_preview_exit && return 0; return 1; }
     if [[ "$current" != "$PREVIEW_IDENTITY" ]]; then
       PREVIEW_PID=""
       return 0
