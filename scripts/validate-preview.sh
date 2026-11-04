@@ -41,7 +41,7 @@ cleanup_preview() {
   cleanup_mount || return 1
   if [[ "${INSTALL_LOCK_HELD:-false}" == true ]]; then rmdir "$INSTALL_LOCK"; fi
 }
-trap cleanup_preview EXIT
+trap 'finish_preview $?' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -110,4 +110,4 @@ fi
 
 echo "Installing mounted app to $INSTALL_PATH"
 install_preview "$MOUNT_DIR/${APP_NAME}.app"
-echo "Known-good preview validation completed."
+echo "Installed preview launched; finishing cleanup."

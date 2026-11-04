@@ -53,11 +53,13 @@ stop_owned_preview() {
 }
 
 smoke_launch_app() {
-  local app_path="$1" label="$2" keep_running="${3:-false}" executable current
+  local app_path="$1" label="$2" keep_running="${3:-false}" executable current launch_log
+  launch_log="$TRANSACTION_DIR/preview-mounted.log"
+  if [[ "$keep_running" == true ]]; then launch_log="$TRANSACTION_DIR/preview-installed.log"; fi
   executable="$(canonical_executable "$app_path")" || return 1
   require_app_stopped "$app_path" || return 1
   echo "Launching $label"
-  "$executable" >"$TRANSACTION_DIR/preview-launch.log" 2>&1 &
+  "$executable" >"$launch_log" 2>&1 &
   PREVIEW_PID=$!
   PREVIEW_IDENTITY=""
   # The child may still be between fork and exec when the first probe runs.
@@ -135,4 +137,13 @@ cleanup_preview_install() {
   if [[ -d "$TRANSACTION_DIR/staged/$(basename "$INSTALL_PATH")" ]]; then
     echo "Staged replacement retained. If promotion failed, the installation may be absent; inspect before retrying."
   fi
+}
+
+finish_preview() {
+  local result="$1"
+  trap - EXIT
+  if ! cleanup_preview; then
+    if [[ "$result" == 0 ]]; then result=1; fi
+  fi
+  exit "$result"
 }

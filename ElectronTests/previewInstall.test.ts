@@ -264,7 +264,7 @@ stop_owned_preview
 canonical_executable() { printf '/usr/bin/true\n'; }
 require_app_stopped() { :; }
 TRANSACTION_DIR="$(mktemp -d)"
-trap 'rm -f "$TRANSACTION_DIR/preview-launch.log" "$TRANSACTION_DIR/probed"; rmdir "$TRANSACTION_DIR"' EXIT
+trap 'rm -f "$TRANSACTION_DIR/preview-mounted.log" "$TRANSACTION_DIR/preview-installed.log" "$TRANSACTION_DIR/probed"; rmdir "$TRANSACTION_DIR"' EXIT
 ps() {
   if [[ -f "$TRANSACTION_DIR/probed" ]]; then printf 'start /usr/bin/true\n';
   else touch "$TRANSACTION_DIR/probed"; printf 'start /bin/bash\n'; fi
@@ -282,7 +282,7 @@ smoke_launch_app /fixture/app fixture true
     const result = processFixture(`
 canonical_executable() { printf '/usr/bin/true\n'; }
 require_app_stopped() { :; }
-TRANSACTION_DIR="$(mktemp -d)"; trap 'rm -f "$TRANSACTION_DIR/preview-launch.log"; rmdir "$TRANSACTION_DIR"' EXIT
+TRANSACTION_DIR="$(mktemp -d)"; trap 'rm -f "$TRANSACTION_DIR/preview-mounted.log" "$TRANSACTION_DIR/preview-installed.log"; rmdir "$TRANSACTION_DIR"' EXIT
 ps() { printf 'start /different/Baseline\n'; }
 sleep() { :; }
 smoke_launch_app /fixture/app fixture`);
@@ -320,4 +320,21 @@ verify_preview_bundle '${app}' /reference.app`);
       }
     }
   );
+});
+
+describe("preview exit cleanup", () => {
+  it.each([
+    [0, 0, 0],
+    [0, 1, 1],
+    [74, 1, 74],
+    [130, 1, 130],
+    [143, 0, 143]
+  ])("preserves exit %s with cleanup %s as %s", (initial, cleanup, expected) => {
+    const result = processFixture(`
+cleanup_preview() { echo cleanup; return ${cleanup}; }
+trap 'finish_preview $?' EXIT
+exit ${initial}`);
+    expect(result.status).toBe(expected);
+    expect(result.stdout.trim()).toBe("cleanup");
+  });
 });
