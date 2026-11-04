@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Arshia Ghaf
 // SPDX-License-Identifier: GPL-3.0-only
 
+import { Welcome } from "./Welcome";
 import { PermissionHelp } from "./PermissionHelp";
 import { SelfUpdateButton } from "./SelfUpdateButton";
 import { baseline } from "../ipc";
@@ -40,6 +41,9 @@ import {
 } from "../helpers/profile";
 
 export function SettingsView({ snapshot }: { snapshot: BaselineSnapshot }) {
+  const [showWelcome, setShowWelcome] = useState(false);
+  const welcomeButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreWelcomeFocus = useRef(false);
   const [selectedSection, setSelectedSection] = useState<SettingsSectionID>("general");
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
   const [appMetadata, setAppMetadata] = useState<AppMetadata>();
@@ -69,6 +73,24 @@ export function SettingsView({ snapshot }: { snapshot: BaselineSnapshot }) {
     void baseline.getAppMetadata().then(setAppMetadata);
   }, []);
 
+  useLayoutEffect(() => {
+    if (!showWelcome && restoreWelcomeFocus.current) {
+      restoreWelcomeFocus.current = false;
+      welcomeButtonRef.current?.focus();
+    }
+  }, [showWelcome]);
+
+  if (showWelcome)
+    return (
+      <Welcome
+        revisit
+        onClose={() => {
+          restoreWelcomeFocus.current = true;
+          setShowWelcome(false);
+        }}
+      />
+    );
+
   return (
     <main className="app-shell settings-shell">
       <SettingsSidebar selectedSection={selectedSection} onSelectSection={setSelectedSection} />
@@ -91,6 +113,26 @@ export function SettingsView({ snapshot }: { snapshot: BaselineSnapshot }) {
               section={selectedSection}
               snapshot={snapshot}
             />
+            {selectedSection === "general" && (
+              <section className="panel settings-panel">
+                <PanelTitle title="Welcome" />
+                <div className="settings-panel-box">
+                  <div className="settings-row settings-row-action">
+                    <SettingsRowText
+                      label="Get to know Baseline"
+                      description="Revisit the introduction without changing your settings."
+                    />
+                    <button
+                      ref={welcomeButtonRef}
+                      className="primary-button"
+                      onClick={() => setShowWelcome(true)}
+                    >
+                      Show welcome
+                    </button>
+                  </div>
+                </div>
+              </section>
+            )}
           </section>
         </section>
       </section>

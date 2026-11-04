@@ -1147,9 +1147,10 @@ describe("update store helpers", () => {
       },
       runBrewCommand
     });
-    await store.updatePreferences({ updateIntroductionDismissed: true });
+    await store.updatePreferences({ updateIntroductionDismissed: true, welcomeDismissed: true });
     await expect(new SnapshotPersistence(userData).load()).resolves.toMatchObject({
-      updateIntroductionDismissed: true
+      updateIntroductionDismissed: true,
+      welcomeDismissed: true
     });
     expect(runBrewCommand).not.toHaveBeenCalled();
     await expect(

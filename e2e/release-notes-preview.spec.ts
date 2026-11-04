@@ -51,6 +51,7 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     };
     const snapshot = {
       ...defaultPersistedSnapshot(),
+      welcomeDismissed: true,
       apps,
       updates: apps.map((app, i) => ({
         id: app.id,
