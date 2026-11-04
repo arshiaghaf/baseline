@@ -3,15 +3,10 @@
 
 import React from "react";
 
-export function clearCompactPopoverControlFocus(
-  target: EventTarget | Element | null,
-  compactShell: HTMLElement | null
-): void {
-  const focusTarget = compactPopoverControlFocusTarget(target, compactShell);
-  if (!focusTarget) {
-    return;
-  }
-  focusTarget.blur();
+const compactPointerBlurTargets = new WeakSet<EventTarget>();
+
+export function isCompactPointerBlur(target: EventTarget): boolean {
+  return compactPointerBlurTargets.has(target);
 }
 
 export function suppressCompactPopoverControlFocus(
@@ -20,6 +15,17 @@ export function suppressCompactPopoverControlFocus(
   event: React.MouseEvent
 ): void {
   if (compactPopoverControlFocusTarget(target, compactShell)) {
+    // Pointer activation must not leave a previously keyboard-focused action
+    // armed while focus is intentionally suppressed on the clicked button.
+    const active = document.activeElement;
+    if (active instanceof HTMLButtonElement && compactShell?.contains(active)) {
+      compactPointerBlurTargets.add(active);
+      try {
+        active.blur();
+      } finally {
+        compactPointerBlurTargets.delete(active);
+      }
+    }
     event.preventDefault();
   }
 }
@@ -85,12 +91,48 @@ export function compareDocumentOrder(lhs: HTMLElement, rhs: HTMLElement): number
   return 0;
 }
 
-export function trapFocusWithin(event: KeyboardEvent, container: HTMLElement | null): void {
-  if (!container) {
+export function trapFocusWithin(
+  event: KeyboardEvent,
+  container: HTMLElement | null,
+  includeSearchMenus = false
+): void {
+  if (event.defaultPrevented || !container) {
     return;
   }
 
   const focusableElements = focusableElementsIn(container);
+  const floatingMenus = includeSearchMenus
+    ? Array.from(document.querySelectorAll<HTMLElement>(searchPaletteFloatingRowMenuSelector))
+    : [];
+  let hasFloatingContent = false;
+  for (const menu of floatingMenus) {
+    const triggerIndex = focusableElements.findIndex(
+      (element) => element.getAttribute("aria-controls") === menu.id
+    );
+    if (triggerIndex < 0) continue;
+    focusableElements.splice(triggerIndex + 1, 0, ...focusableElementsIn(menu));
+    hasFloatingContent = true;
+  }
+  if (includeSearchMenus) {
+    for (const { owner, panel } of ownedReleaseNotesPanels(container)) {
+      const triggerIndex = focusableElements.findIndex(
+        (element) => element.getAttribute("aria-controls") === panel.id
+      );
+      // A confirmed missing result removes its trigger while the panel remains
+      // readable. Keep its controls at the retained owning row's position.
+      const followingIndex = focusableElements.findIndex(
+        (element) => compareDocumentOrder(owner, element) < 0 && !owner.contains(element)
+      );
+      const insertionIndex =
+        triggerIndex >= 0
+          ? triggerIndex + 1
+          : followingIndex >= 0
+            ? followingIndex
+            : focusableElements.length;
+      focusableElements.splice(insertionIndex, 0, ...focusableElementsIn(panel));
+      hasFloatingContent = true;
+    }
+  }
   if (focusableElements.length === 0) {
     event.preventDefault();
     container.focus();
@@ -100,6 +142,20 @@ export function trapFocusWithin(event: KeyboardEvent, container: HTMLElement | n
   const firstElement = focusableElements[0]!;
   const lastElement = focusableElements[focusableElements.length - 1]!;
   const activeElement = document.activeElement;
+  // A portal has a different DOM tab order. Keep it next to its owning trigger,
+  // and handle traversal explicitly while it is part of this modal scope.
+  if (hasFloatingContent) {
+    event.preventDefault();
+    const index = focusableElements.indexOf(activeElement as HTMLElement);
+    const next =
+      index < 0
+        ? event.shiftKey
+          ? focusableElements.length - 1
+          : 0
+        : (index + (event.shiftKey ? -1 : 1) + focusableElements.length) % focusableElements.length;
+    focusableElements[next]?.focus();
+    return;
+  }
   if (event.shiftKey) {
     if (activeElement === firstElement || !container.contains(activeElement)) {
       event.preventDefault();
@@ -117,9 +173,24 @@ export function trapFocusWithin(event: KeyboardEvent, container: HTMLElement | n
 export const searchPaletteFloatingRowMenuSelector =
   "[data-search-palette-floating-row-menu='true'][role='menu']";
 
+function ownedReleaseNotesPanels(container: HTMLElement | null) {
+  if (!container) return [];
+  return Array.from(container.querySelectorAll<HTMLElement>("[data-release-notes-dialog]"))
+    .map((owner) => ({
+      owner,
+      panel: document.getElementById(owner.dataset.releaseNotesDialog ?? "")
+    }))
+    .filter(
+      (entry): entry is { owner: HTMLElement; panel: HTMLElement } =>
+        entry.panel instanceof HTMLElement &&
+        entry.panel.matches(".release-notes-panel[role='dialog']")
+    );
+}
+
 export function hasOpenNestedMenu(container: HTMLElement | null): boolean {
   return Boolean(
     container?.querySelector("[role='menu']") ||
-    document.querySelector(searchPaletteFloatingRowMenuSelector)
+    document.querySelector(searchPaletteFloatingRowMenuSelector) ||
+    ownedReleaseNotesPanels(container).length > 0
   );
 }

@@ -13,6 +13,8 @@ export type HomebrewPresentation = "formula" | "app" | "cli" | "package" | "cask
 export type AppRecord = {
   id: string;
   bundlePath: string;
+  /** Last resolved scanner identity; refreshed when a bundle is scanned again. */
+  canonicalBundlePath?: string;
   /** Scanner evidence for invalidating saved provider mappings after replacement. */
   providerFingerprint?: string;
   /** Last positively resolved macOS-serviced location; not evidence of version freshness. */
@@ -68,6 +70,8 @@ export type SparkleLookupResult = {
   // Provider metadata identifies an installer/archive enclosure, independently of its URL shape.
   updateURLKind?: "download";
   releaseNotesURL?: string;
+  releaseNotesContent?: string;
+  releaseNotesFormat?: import("./releaseNotes").ReleaseNotesFormat;
   releaseDate?: string;
 };
 
@@ -135,6 +139,8 @@ export type UpdateRecord = {
   homebrewToken?: string;
   releaseNotesURL?: string;
   releaseNotesSummary?: string;
+  releaseNotesContent?: string;
+  releaseNotesFormat?: import("./releaseNotes").ReleaseNotesFormat;
   releaseDate?: string;
   checkedAt: string;
 };
@@ -242,6 +248,8 @@ export type HomebrewManagedItem = {
   kind: HomebrewManagedItemKind;
   presentation?: HomebrewPresentation;
   installedVersion: VersionValue;
+  /** Homebrew package version before an app marketing version is used for display. */
+  packageInstalledVersion?: VersionValue;
   latestVersion?: VersionValue;
   isOutdated: boolean;
   releaseDate?: string;
@@ -324,6 +332,8 @@ export type HomebrewConfigurationReason = {
 };
 
 export type RefreshState = {
+  /** Current-session app discovery health; never inferred from notices or persisted. */
+  appDiscoveryComplete?: boolean;
   /** Runtime-only failure of refresh computation, independent of operation errors. */
   refreshCheckFailed?: boolean;
   /** Current-session inventory and outdated-check health; never persisted. */

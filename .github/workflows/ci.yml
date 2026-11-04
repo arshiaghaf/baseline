@@ -29,7 +29,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 24.22.2
           cache: npm
 
       - name: Runner info
@@ -52,11 +52,16 @@ jobs:
       - name: Prepare Electron runtime before parallel tests
         run: node -e 'require("electron")'
 
+      - name: Prepare pinned upstream Sparkle for native guard tests
+        run: npm run prepare:sparkle
+
       - name: Lint shell scripts
         run: |
+          bash -n scripts/baseline
           bash -n scripts/create-unsigned-dmg.sh
           bash -n scripts/check-release-assets.sh
           bash -n scripts/prepare-unsigned-release.sh
+          bash -n scripts/prepare-signed-updates.sh
           bash -n scripts/validate-preview.sh
           bash -n scripts/preview-install.sh
 
@@ -74,6 +79,11 @@ jobs:
 
       - name: Package Electron app
         run: npm run build
+
+      - name: Authenticated isolated updater lifecycle and rejection checks
+        env:
+          BASELINE_SELF_UPDATE_FIXTURE_TESTS: "1"
+        run: npm test -- ElectronTests/selfUpdateLifecycle.test.ts
 
       - name: Verify Apple Silicon package architecture and icons
         run: |

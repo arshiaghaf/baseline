@@ -1,19 +1,20 @@
 {
   "name": "baseline",
-  "version": "0.9.0",
+  "version": "0.12.0",
   "description": "Baseline is a standalone macOS Electron app for finding app updates through public update sources.",
   "main": ".vite/build/main.js",
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package --platform=darwin --arch=arm64",
     "make": "electron-forge make --platform=darwin --arch=arm64",
+    "prepare:sparkle": "node scripts/prepare-sparkle.mjs",
     "build": "electron-forge package --platform=darwin --arch=arm64",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:electron": "playwright test",
     "lint": "eslint .",
-    "format": "prettier --check \"src/**/*.{ts,tsx,css}\" \"ElectronTests/**/*.{ts,tsx}\" \"e2e/**/*.ts\" \"*.{json,ts,mts,js,cjs}\""
+    "format": "prettier --check \"src/**/*.{ts,tsx,css}\" \"ElectronTests/**/*.{ts,tsx}\" \"e2e/**/*.ts\" \"*.{json,ts,mts,js,cjs}\" \"build-support/**/*.{json,cjs}\""
   },
   "keywords": [
     "macos",
@@ -29,26 +30,33 @@
   },
   "dependencies": {
     "fast-xml-parser": "^5.11.2",
-    "lucide-react": "^1.57.0",
+    "htmlparser2": "12.0.0",
+    "lucide-react": "^1.64.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
   "overrides": {
     "@tootallnate/once": "^3.0.1",
     "extract-zip": "npm:@electron-internal/extract-zip@1.0.5",
-    "tar": "^7.5.18",
+    "tar": "^7.5.22",
     "tmp": "^0.2.6",
     "global-agent": {
-      "roarr": "6.0.0"
+      "roarr": {
+        ".": "6.0.0",
+        "fast-json-stringify": "5.16.1"
+      }
+    },
+    "appdmg": {
+      "image-size": "$image-size"
     }
   },
   "devDependencies": {
     "@electron-forge/cli": "^8.0.1",
-    "@electron-forge/maker-dmg": "^7.11.2",
+    "@electron-forge/maker-dmg": "^8.0.1",
     "@electron-forge/maker-zip": "^7.11.2",
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron/asar": "^3.4.1",
-    "@electron/osx-sign": "^1.3.3",
+    "@electron/osx-sign": "^2.7.2",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.64.1",
     "@tailwindcss/postcss": "^4.3.3",
@@ -58,19 +66,20 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
-    "@vitest/ui": "^5.0.4",
-    "autoprefixer": "^10.6.1",
+    "@vitest/ui": "^5.0.5",
+    "autoprefixer": "^10.6.2",
     "electron": "^44.9.2",
     "electron-installer-dmg": "^5.0.1",
-    "eslint": "^10.12.0",
+    "eslint": "^10.13.0",
+    "image-size": "file:build-support/image-size-compat",
     "jsdom": "^30.1.3",
-    "postcss": "^8.5.30",
+    "postcss": "^8.5.32",
     "prettier": "^3.9.10",
     "tailwindcss": "^4.3.3",
     "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.71.2",
-    "vite": "^8.3.4",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^8.3.5",
     "vitest": "^5.0.0"
   }
 }

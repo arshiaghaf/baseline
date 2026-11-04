@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { createPackage, extractAll, extractFile, getRawHeader } from "@electron/asar";
-import { signAsync } from "@electron/osx-sign";
+import { sign } from "@electron/osx-sign";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -169,7 +169,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       path.join(testApp, "Contents", "Info.plist")
     ]);
     // Re-sign only this disposable copy after changing its archive.
-    await signAsync({ app: testApp, platform: "darwin", ...localAdHocSigningOptions() });
+    await sign({ app: testApp, platform: "darwin", ...localAdHocSigningOptions() });
     verifyMacBundle(testApp);
     process.env.BASELINE_E2E_APP_DIR = appDirectory;
     process.env.BASELINE_E2E_EXECUTABLE = path.join(testApp, "Contents", "MacOS", "Baseline");

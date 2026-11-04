@@ -13,6 +13,7 @@ import {
   profileStatsSignatureVersion
 } from "../src/shared/domain";
 import { SnapshotPersistence } from "../src/main/persistence";
+import { ProfileStatsIntegrityService } from "../src/main/profileStatsIntegrityService";
 import { HomebrewCaskClient } from "../src/main/homebrewCaskClient";
 import { SparkleAppcastClient } from "../src/main/sparkleAppcastClient";
 import {
@@ -34,6 +35,7 @@ import { homebrewCommandToken } from "../src/shared/homebrewIdentity";
 import { trayMenuTemplate } from "../src/main/trayMenu";
 import { configurationBlockedInventory } from "../src/main/homebrewInventoryClient";
 import type { CommandResult } from "../src/main/commandRunner";
+import * as selfOwnership from "../src/main/selfUpdateOwnership";
 
 let tempDirs: string[] = [];
 const fixtureCleanups: (() => Promise<void>)[] = [];
@@ -94,6 +96,132 @@ function caskIndexForSelfUpdatingApp(latestVersion: ReturnType<typeof version>):
 }
 
 describe("update store helpers", () => {
+  it("returns the newer release to an action that joined an older scheduler lookup", async () => {
+    let finishOld!: (value: SelfUpdateRecord) => void;
+    const old = {
+      available: true,
+      currentVersion: version("0.8.0"),
+      latestVersion: version("0.9.0"),
+      releaseURL: "https://github.com/arshiaghaf/baseline/releases/tag/v0.9.0"
+    };
+    const latest = {
+      ...old,
+      latestVersion: version("0.10.0"),
+      releaseURL: "https://github.com/arshiaghaf/baseline/releases/tag/v0.10.0"
+    };
+    const lookup = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<SelfUpdateRecord>((resolve) => {
+            finishOld = resolve;
+          })
+      )
+      .mockResolvedValue(latest);
+    const store = await makeStore({
+      currentAppVersion: "0.8.0",
+      clients: { selfUpdate: { lookup } }
+    });
+    const scheduler = store.checkForSelfUpdate();
+    const manual = store.checkForSelfUpdate();
+    const scan = store.refresh();
+    try {
+      await vi.waitFor(() => expect(store.getSnapshot().selfUpdate).toEqual(latest));
+      finishOld(old);
+      expect(await manual).toEqual(latest);
+      expect(await scheduler).toEqual(latest);
+    } finally {
+      finishOld(old);
+      await scan;
+      await scheduler;
+      await manual;
+    }
+  });
+
+  it("serializes fresh ownership reads with mutations and never reuses cached approval", async () => {
+    let finish!: (value: boolean) => void;
+    const verify = vi
+      .spyOn(selfOwnership, "directSelfInstallIsVerified")
+      .mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finish = resolve;
+          })
+      )
+      .mockResolvedValue(false);
+    const store = await makeStore({
+      currentAppIdentity: {
+        bundlePath: "/fixture/Baseline.app",
+        bundleIdentifier: "com.example.fixture"
+      }
+    });
+    const first = store.canUseNativeSelfUpdater();
+    try {
+      expect(store.hasActiveUpdateOperation()).toBe(true);
+      await expect(store.canUseNativeSelfUpdater()).resolves.toBe(false);
+      await expect(store.prepareToQuit()).resolves.toBe(false);
+      finish(true);
+      await expect(first).resolves.toBe(true);
+      expect(store.hasActiveUpdateOperation()).toBe(false);
+      await expect(store.canUseNativeSelfUpdater()).resolves.toBe(false);
+      expect(verify).toHaveBeenCalledTimes(2);
+    } finally {
+      finish(true);
+      await first;
+      verify.mockRestore();
+    }
+  });
+
+  it("can verify ownership while app scanning continues after inventory releases its reservation", async () => {
+    let finish!: (apps: AppRecord[]) => void;
+    const scanApplications = vi.fn(
+      () =>
+        new Promise<AppRecord[]>((resolve) => {
+          finish = resolve;
+        })
+    );
+    const verify = vi.spyOn(selfOwnership, "directSelfInstallIsVerified").mockResolvedValue(true);
+    const store = await makeStore({
+      currentAppIdentity: {
+        bundlePath: "/fixture/Baseline.app",
+        bundleIdentifier: "com.example.fixture"
+      },
+      clients: { scanner: { scanApplications } }
+    });
+    const refresh = store.refresh();
+    try {
+      await vi.waitFor(() => expect(scanApplications).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(store.getSnapshot().isHomebrewCleanupLocked).toBe(false));
+      expect(store.getSnapshot().isRefreshing).toBe(true);
+      await expect(store.canUseNativeSelfUpdater()).resolves.toBe(true);
+    } finally {
+      finish([]);
+      await refresh;
+      verify.mockRestore();
+    }
+  });
+
+  it("rechecks ownership after download and preserves the live store when admission changes", async () => {
+    const verify = vi
+      .spyOn(selfOwnership, "directSelfInstallIsVerified")
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+    const store = await makeStore({
+      currentAppIdentity: {
+        bundlePath: "/fixture/Baseline.app",
+        bundleIdentifier: "com.example.fixture"
+      }
+    });
+    try {
+      await expect(store.canUseNativeSelfUpdater()).resolves.toBe(true);
+      await expect(store.prepareToQuitForSelfUpdate()).resolves.toBe(false);
+      await expect(store.setSearchText("still usable")).resolves.toBeUndefined();
+      expect(verify).toHaveBeenCalledTimes(2);
+    } finally {
+      verify.mockRestore();
+    }
+  });
+
   it("cancels queued mutations before a configuration-blocked refresh releases its reservation", async () => {
     const item = homebrewItem({
       id: "cask:queued",
@@ -1191,6 +1319,87 @@ describe("update store helpers", () => {
     expect(lookup).toHaveBeenCalledTimes(2);
   });
 
+  it("publishes self-update results before app scans finish", async () => {
+    let finishScan!: (apps: AppRecord[]) => void;
+    const scanApplications = vi.fn(
+      () =>
+        new Promise<AppRecord[]>((done) => {
+          finishScan = done;
+        })
+    );
+    const result = {
+      available: true,
+      currentVersion: version("0.8.0"),
+      latestVersion: version("0.10.0"),
+      releaseURL: "https://example.com/new"
+    };
+    const store = await makeStore({
+      currentAppVersion: "0.8.0",
+      clients: {
+        scanner: { scanApplications },
+        selfUpdate: { lookup: vi.fn(async () => result) }
+      }
+    });
+    const refreshing = store.refresh();
+    try {
+      await vi.waitFor(() => expect(scanApplications).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(store.getSnapshot().selfUpdate).toEqual(result));
+      expect(store.getSnapshot().isRefreshing).toBe(true);
+    } finally {
+      finishScan([]);
+      await refreshing;
+    }
+  });
+
+  it("cannot overwrite a newer manual self-update check when an earlier scan finishes later", async () => {
+    let finishScan!: (apps: AppRecord[]) => void;
+    let finishOld!: (record: SelfUpdateRecord) => void;
+    const scanApplications = vi.fn(
+      () =>
+        new Promise<AppRecord[]>((done) => {
+          finishScan = done;
+        })
+    );
+    const old = {
+      available: true,
+      currentVersion: version("0.8.0"),
+      latestVersion: version("0.9.0"),
+      releaseURL: "https://example.com/old"
+    };
+    const latest = {
+      ...old,
+      latestVersion: version("0.10.0"),
+      releaseURL: "https://example.com/latest"
+    };
+    const lookup = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<SelfUpdateRecord>((done) => {
+            finishOld = done;
+          })
+      )
+      .mockResolvedValue(latest);
+    const store = await makeStore({
+      currentAppVersion: "0.8.0",
+      clients: { scanner: { scanApplications }, selfUpdate: { lookup } }
+    });
+    const refreshing = store.refresh();
+    try {
+      await vi.waitFor(() => expect(scanApplications).toHaveBeenCalledOnce());
+      await store.checkForSelfUpdate();
+      expect(store.getSnapshot().selfUpdate).toEqual(latest);
+      finishOld(old);
+      finishScan([]);
+      await refreshing;
+      expect(store.getSnapshot().selfUpdate).toEqual(latest);
+    } finally {
+      finishOld(old);
+      finishScan([]);
+      await refreshing;
+    }
+  });
+
   it("scans default directories before additional directories", async () => {
     const scannedDirectories: string[][] = [];
     const store = await makeStore({
@@ -2009,7 +2218,7 @@ describe("update store helpers", () => {
       available: true,
       currentVersion,
       latestVersion: version("0.2.0"),
-      releaseURL: "https://github.com/arshiaghaf/Baseline/releases/latest",
+      releaseURL: "https://github.com/arshiaghaf/baseline/releases/latest",
       checkedAt
     }));
     const store = await makeStore({
@@ -2030,7 +2239,7 @@ describe("update store helpers", () => {
       available: true,
       currentVersion: version("0.1.0"),
       latestVersion: version("0.2.0"),
-      releaseURL: "https://github.com/arshiaghaf/Baseline/releases/latest"
+      releaseURL: "https://github.com/arshiaghaf/baseline/releases/latest"
     });
   });
 
@@ -3336,6 +3545,188 @@ describe("update store helpers", () => {
     expect(store.getSnapshot().refreshErrorMessage).toContain("Error: still running");
   });
 
+  it.each(["no-op", "same-version rebuild"] as const)(
+    "persists only performed Homebrew updates in profile history and lifetime totals: %s",
+    async (outcome) => {
+      const item = homebrewItem({
+        id: "cask:example",
+        token: "example",
+        name: "Example",
+        kind: "cask",
+        installedVersion: version("1"),
+        latestVersion: version(outcome === "no-op" ? "2" : "1"),
+        isOutdated: true
+      });
+      const completedItem = {
+        ...item,
+        isOutdated: false,
+        installedVersion: version(outcome === "no-op" ? "2" : "1")
+      };
+      const output =
+        outcome === "no-op"
+          ? "Warning: Not upgrading example, the latest version is already installed"
+          : "Cask example was successfully installed!";
+      const runBrewCommand = vi.fn<
+        NonNullable<ConstructorParameters<typeof UpdateStore>[0]["runBrewCommand"]>
+      >(async (_command, onLine) => {
+        onLine?.(output);
+        return { success: true, status: 0, output };
+      });
+      const fetchInventory = vi.fn(async () => ({
+        items: [completedItem],
+        inventoryReadSucceededByKind: { formula: true, cask: true },
+        outdatedDetectionSucceeded: true,
+        outdatedDetectionSucceededByKind: { formula: true, cask: true }
+      }));
+      const integrity = new ProfileStatsIntegrityService(
+        async () => "synthetic-history-fixture-key"
+      );
+      let persistence!: SnapshotPersistence;
+      const store = await makeVerifiedStore({
+        persisted: { ...defaultPersistedSnapshot(), homebrewItems: [item] },
+        clients: { homebrewInventory: { fetchInventory } },
+        runBrewCommand,
+        profileStatsIntegrity: integrity,
+        onPersistence: (value) => {
+          persistence = value;
+        }
+      });
+
+      await store.performHomebrewUpdate(item.id);
+
+      expect(fetchInventory).toHaveBeenCalledOnce();
+      expect(runBrewCommand).toHaveBeenCalledOnce();
+      expect(store.getSnapshot()).toMatchObject({
+        homebrewItems: [
+          expect.objectContaining({
+            isOutdated: false,
+            installedVersion: completedItem.installedVersion
+          })
+        ],
+        homebrewUpdatedPendingRefreshItemIDs: [],
+        isHomebrewCommandLocked: false
+      });
+      const saved = await persistence.load();
+      const verified = await integrity.verifyOrInitialize(saved.profileStats);
+      expect(verified.integrityStatus).toBe("verified");
+      const expectedCount = outcome === "no-op" ? 0 : 1;
+      expect(verified.events).toHaveLength(expectedCount);
+      expect(verified.lifetime?.entries.reduce((total, entry) => total + entry.count, 0)).toBe(
+        expectedCount
+      );
+      expect(saved.profileStats.events).toEqual(store.getSnapshot().profileStats.events);
+      expect(saved.profileStats.lifetime).toEqual(store.getSnapshot().profileStats.lifetime);
+      if (outcome !== "no-op") {
+        expect(verified.events[0]).toMatchObject({ type: "homebrewUpdate", targetID: item.id });
+        expect(verified.lifetime?.entries).toEqual([
+          expect.objectContaining({
+            type: "homebrewUpdate",
+            targetID: item.id,
+            channel: "homebrew",
+            count: 1
+          })
+        ]);
+      }
+    }
+  );
+
+  it.each(["single", "queued", "batch"] as const)(
+    "persists no update for a skipped cask while retaining genuine rebuilds in a %s run",
+    async (scenario) => {
+      const skipped = homebrewItem({
+        id: "cask:example",
+        token: "example",
+        name: "Example",
+        kind: "cask",
+        installedVersion: version("1"),
+        latestVersion: version("2"),
+        isOutdated: true
+      });
+      const rebuilt = homebrewItem({
+        id: "cask:other",
+        token: "other",
+        name: "Other",
+        kind: "cask",
+        installedVersion: version("1"),
+        latestVersion: version("1"),
+        isOutdated: true
+      });
+      const items = scenario === "single" ? [skipped] : [skipped, rebuilt];
+      let operated = false;
+      // Homebrew cask/upgrade.rb warns and skips unreadable installed metadata.
+      // The suggested repair is output only; Baseline must not execute it.
+      const warning =
+        "Warning: The cask 'example' cannot be upgraded as-is. To fix this, run:\n  brew reinstall --cask --force example";
+      const runBrewCommand = vi.fn<
+        NonNullable<ConstructorParameters<typeof UpdateStore>[0]["runBrewCommand"]>
+      >(async (command, onLine) => {
+        if (command[0] === "update") return { success: true, status: 0, output: "" };
+        operated = true;
+        const output =
+          warning + (scenario === "single" ? "" : "\nCask other was successfully installed!");
+        for (const line of output.split("\n")) onLine?.(line);
+        return { success: true, status: 0, output };
+      });
+      const fetchInventory = vi.fn(async () => ({
+        items: items.map((item) =>
+          item.id === rebuilt.id && operated ? { ...item, isOutdated: false } : item
+        ),
+        inventoryReadSucceededByKind: { formula: true, cask: true },
+        outdatedDetectionSucceeded: true,
+        outdatedDetectionSucceededByKind: { formula: true, cask: true }
+      }));
+      const integrity = new ProfileStatsIntegrityService(
+        async () => "synthetic-skipped-cask-fixture-key"
+      );
+      let persistence!: SnapshotPersistence;
+      const store = await makeVerifiedStore({
+        persisted: { ...defaultPersistedSnapshot(), homebrewItems: items },
+        clients: { homebrewInventory: { fetchInventory } },
+        runBrewCommand,
+        profileStatsIntegrity: integrity,
+        onPersistence: (value) => {
+          persistence = value;
+        }
+      });
+      const work: Promise<void>[] = [];
+      try {
+        if (scenario === "queued") {
+          work.push(store.refresh(true));
+          work.push(...items.map((item) => store.performHomebrewUpdate(item.id)));
+          expect(store.getSnapshot().homebrewQueuedItemIDs).toEqual(items.map((item) => item.id));
+        } else if (scenario === "batch") work.push(store.performHomebrewUpdateAll());
+        else work.push(store.performHomebrewUpdate(skipped.id));
+        await Promise.all(work);
+
+        const saved = await persistence.load();
+        const verified = await integrity.verifyOrInitialize(saved.profileStats);
+        const expectedIDs = scenario === "single" ? [] : [rebuilt.id];
+        expect(verified.integrityStatus).toBe("verified");
+        expect(verified.events.map((event) => event.targetID)).toEqual(expectedIDs);
+        expect(
+          verified.lifetime?.entries.map((entry) => ({ id: entry.targetID, count: entry.count }))
+        ).toEqual(expectedIDs.map((id) => ({ id, count: 1 })));
+        expect(saved.profileStats.events).toEqual(store.getSnapshot().profileStats.events);
+        expect(saved.homebrewItems.find((item) => item.id === skipped.id)).toMatchObject({
+          isOutdated: true,
+          installedVersion: version("1")
+        });
+        expect(store.getSnapshot()).toMatchObject({
+          homebrewUpdatedPendingRefreshItemIDs: [],
+          homebrewBatchFailedItemIDs: [],
+          isHomebrewCommandLocked: false
+        });
+        expect(runBrewCommand.mock.calls.map(([command]) => command)).toEqual([
+          ...(scenario === "batch" ? [["update"]] : []),
+          ["upgrade", "--cask", "--greedy", ...items.map((item) => item.token)]
+        ]);
+      } finally {
+        await Promise.allSettled(work);
+        await persistence.load();
+      }
+    }
+  );
+
   it("updates only non-ignored Homebrew items in a batch run", async () => {
     const runBrewCommand = vi.fn<
       NonNullable<ConstructorParameters<typeof UpdateStore>[0]["runBrewCommand"]>
@@ -3750,7 +4141,13 @@ describe("update store helpers", () => {
       ]
     };
     const successfulMas = vi.fn(async () => ({ success: true, status: 0, output: "" }));
-    const successfulStore = await makeStore({ persisted, runMasCommand: successfulMas });
+    const successfulStore = await makeStore({
+      persisted,
+      runMasCommand: successfulMas,
+      clients: {
+        scanner: { scanApplications: async () => [{ ...app, localVersion: version("2.0.0") }] }
+      }
+    });
 
     await successfulStore.performAppUpdate(app.id);
 
@@ -4516,7 +4913,10 @@ describe("update store helpers", () => {
           }
         ]
       },
-      profileStatsIntegrity
+      profileStatsIntegrity,
+      clients: {
+        scanner: { scanApplications: async () => [{ ...app, localVersion: version("2.0.0") }] }
+      }
     });
 
     const firstInstall = store.installHomebrewItem({
@@ -6476,7 +6876,7 @@ async function makeStore({
       lookup: async (currentVersion, checkedAt) => ({
         available: false,
         currentVersion,
-        releaseURL: "https://github.com/arshiaghaf/Baseline/releases/latest",
+        releaseURL: "https://github.com/arshiaghaf/baseline/releases/latest",
         checkedAt
       })
     },
@@ -6934,7 +7334,6 @@ describe("verified formula identity and Homebrew pins", () => {
         displayName: previous.name,
         fromVersion: version("0"),
         toVersion: version("1"),
-        // Keep the identity-migration fixture inside the history retention window.
         updatedAt: new Date().toISOString()
       };
       let items = [firstRefreshFailure ? missing : current];

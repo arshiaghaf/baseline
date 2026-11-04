@@ -222,6 +222,7 @@ function normalizeApp(value: SavedRecord): AppRecord | undefined {
   return {
     id: text(value.id) ?? value.bundlePath,
     bundlePath: value.bundlePath,
+    canonicalBundlePath: text(value.canonicalBundlePath),
     displayName: value.displayName,
     providerFingerprint: text(value.providerFingerprint),
     macOSManagedPath: macOSManagedPath(value.macOSManagedPath),
@@ -283,6 +284,16 @@ function normalizeUpdate(value: SavedRecord): UpdateRecord | undefined {
     homebrewToken: text(value.homebrewToken),
     releaseNotesURL: text(value.releaseNotesURL),
     releaseNotesSummary: text(value.releaseNotesSummary),
+    releaseNotesContent:
+      typeof value.releaseNotesContent === "string" && value.releaseNotesContent.length <= 64_000
+        ? value.releaseNotesContent
+        : undefined,
+    releaseNotesFormat:
+      value.releaseNotesFormat === "html" ||
+      value.releaseNotesFormat === "plain-text" ||
+      value.releaseNotesFormat === "markdown"
+        ? value.releaseNotesFormat
+        : undefined,
     releaseDate: text(value.releaseDate),
     checkedAt: text(value.checkedAt) ?? ""
   };
@@ -347,6 +358,7 @@ function normalizeHomebrewItem(value: SavedRecord): HomebrewManagedItem | undefi
     isSelf: boolean(value.isSelf),
     presentation: presentation(value.presentation),
     installedVersion: savedVersion(value.installedVersion),
+    packageInstalledVersion: optionalVersion(value.packageInstalledVersion),
     latestVersion: optionalVersion(value.latestVersion),
     isOutdated: value.isOutdated === true,
     releaseDate: text(value.releaseDate),

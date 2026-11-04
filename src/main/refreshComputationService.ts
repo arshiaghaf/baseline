@@ -68,6 +68,7 @@ export type RefreshPatch = Partial<
     | "appProviderChecks"
     | "appUpdateComparisonBaseline"
     | "isRefreshing"
+    | "appDiscoveryComplete"
     | "homebrewCheckStatus"
     | "homebrewCheckNoticeMessage"
     | "refreshErrorMessage"
@@ -85,7 +86,6 @@ export type RefreshPatch = Partial<
     | "homebrewDiscoverInstallingItemIDs"
     | "homebrewDiscoverInstalledPendingRefreshItemIDs"
     | "homebrewDiscoverProgressByItemID"
-    | "selfUpdate"
     | "laggingHomebrewCaskTokens"
     | "homebrewDiscoverItems"
   >
@@ -111,6 +111,8 @@ export type RefreshPorts = {
     lightweight: boolean,
     options: RefreshOptions
   ) => Promise<HomebrewInventoryResult>;
+  // The store publishes this result in shared request order, independently of
+  // the app refresh's final commit.
   lookupSelfUpdate: (now: string, signal?: AbortSignal) => Promise<SelfUpdateRecord | undefined>;
   isCurrent: (sequence: number) => boolean;
   isSelfApp: (app: AppRecord) => boolean;
@@ -152,6 +154,7 @@ export class RefreshComputationService {
       // and unrelated preference saves, including a later relaunch.
       appUpdateComparisonBaseline: comparisonBaseline,
       isRefreshing: true,
+      appDiscoveryComplete: false,
       homebrewCheckStatus: "checking",
       homebrewCheckNoticeMessage: undefined,
       refreshErrorMessage: undefined,
@@ -243,16 +246,17 @@ export class RefreshComputationService {
             (!previousPaths.has(entry.bundlePath) || retainedPaths.has(entry.bundlePath))
         )
       );
-      const scanNotice =
-        failedRoots.length > 0 || unreadableApps || retainedApps.length > 0
-          ? [
-              failedRoots.length > 0
-                ? "Some app folders could not be fully read."
-                : "Some apps could not be fully read.",
-              ...(retainedApps.length > 0 ? ["Previously found apps have been kept."] : []),
-              "Refresh to retry."
-            ].join(" ")
-          : undefined;
+      const appDiscoveryComplete =
+        failedRoots.length === 0 && !unreadableApps && retainedApps.length === 0;
+      const scanNotice = !appDiscoveryComplete
+        ? [
+            failedRoots.length > 0
+              ? "Some app folders could not be fully read."
+              : "Some apps could not be fully read.",
+            ...(retainedApps.length > 0 ? ["Previously found apps have been kept."] : []),
+            "Refresh to retry."
+          ].join(" ")
+        : undefined;
       const homebrewItems = preservePreviousHomebrewInventoryMembership(
         homebrewInventory.items,
         this.ports.readState().homebrewItems,
@@ -301,6 +305,7 @@ export class RefreshComputationService {
         },
         {
           apps: scannedApps,
+          homebrewOwnershipApps: apps,
           previousUpdates,
           previousChecks,
           homebrewVersionCheckSucceeded:
@@ -339,7 +344,6 @@ export class RefreshComputationService {
       const [formulaResult, selfUpdateResult] = await supplementaryResults;
       if (formulaResult.status === "rejected") throw formulaResult.reason;
       if (selfUpdateResult.status === "rejected") throw selfUpdateResult.reason;
-      const selfUpdate = selfUpdateResult.value;
 
       if (!this.ports.isCurrent(sequence)) {
         return;
@@ -359,7 +363,8 @@ export class RefreshComputationService {
         scannedApps,
         homebrewIndex,
         previousHomebrewItems,
-        (app) => this.ports.isSelfApp(app)
+        (app) => this.ports.isSelfApp(app),
+        apps
       );
       const homebrewFormulaIdentityContinuity = preserveFormulaIdentityContinuity(
         reconciledHomebrewItems,
@@ -405,6 +410,7 @@ export class RefreshComputationService {
         recentlyUpdated,
         homebrewRecentlyUpdated,
         lastRefreshDate: new Date().toISOString(),
+        appDiscoveryComplete,
         homebrewCheckNoticeMessage,
         lastRefreshNoticeMessage:
           [scanNotice, homebrewCheckNoticeMessage].filter(Boolean).join(" ") || undefined,
@@ -421,7 +427,6 @@ export class RefreshComputationService {
         homebrewDiscoverProgressByItemID: preserveHomebrewCommandState
           ? this.ports.readState().homebrewDiscoverProgressByItemID
           : {},
-        selfUpdate,
         laggingHomebrewCaskTokens: detectLaggingHomebrewCaskTokens(
           homebrewItems,
           updates,
@@ -599,8 +604,8 @@ function catalogueCacheNotice(...statuses: Array<CatalogueStatus | undefined>): 
   const stale = statuses.filter((status): status is CatalogueStatus => Boolean(status?.stale));
   if (stale.length === 0) return undefined;
   const checkedAt = stale
-    .map((status) => status.checkedAt)
-    .filter(Boolean)
-    .sort()[0];
-  return `Using cached Homebrew catalogue metadata${checkedAt ? ` (last checked ${checkedAt})` : ""}. Refresh to retry.`;
+    .map((status) => new Date(status.checkedAt ?? ""))
+    .filter((date) => Number.isFinite(date.getTime()))
+    .sort((lhs, rhs) => lhs.getTime() - rhs.getTime())[0];
+  return `Using cached Homebrew catalogue metadata${checkedAt ? ` (last checked ${checkedAt.toLocaleString()})` : ""}. Refresh to retry.`;
 }

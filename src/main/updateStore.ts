@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { isMacOSManagedApp } from "./macOSManagedApps";
+import { directSelfInstallIsVerified } from "./selfUpdateOwnership";
 import { operationDetailsText } from "../shared/operationReport";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -27,7 +28,13 @@ import { homebrewCommandToken, installedCaskEntry } from "../shared/homebrewIden
 import type { PreferencePatch } from "../shared/ipc";
 import { validatedPreferencePatch } from "./preferenceValidation";
 import { isAllowedExternalURL, isValidHomebrewToken } from "../shared/security";
-import { isVersionEmpty, version, type VersionValue } from "../shared/version";
+import {
+  compareVersions,
+  isVersionEmpty,
+  isVersionGreater,
+  version,
+  type VersionValue
+} from "../shared/version";
 import { AppStoreLookupClient } from "./appStoreLookupClient";
 import { BundleScannerClient } from "./bundleScanner";
 import {
@@ -126,6 +133,8 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
   private readonly homebrewInventory: Pick<HomebrewInventoryClient, "fetchInventory">;
   private readonly selfUpdate: Pick<SelfUpdateClient, "lookup">;
   private selfUpdateCheckTask?: Promise<SelfUpdateRecord | undefined>;
+  private selfUpdateSequence = 0;
+  private latestSelfUpdateLookup?: Promise<SelfUpdateRecord | undefined>;
   private readonly currentAppVersion: VersionValue;
   private readonly currentAppIdentity?: { bundlePath?: string; bundleIdentifier?: string };
   private readonly runBrewCommand: typeof defaultRunBrewCommand;
@@ -146,6 +155,8 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
 
   private state: BaselineSnapshot;
   private snapshotRevision = 0;
+  private refreshErrorRevision = 0;
+  private appOpenFailure?: { appID: string; revision: number };
   private closing = false;
   private refreshRequestedWhileClosing?: RefreshRecoveryRequest;
   private refreshRecoveryRequired?: RefreshRecoveryRequest;
@@ -560,6 +571,9 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
       this.deferRefresh(request);
       return;
     }
+    // Superseded callers await the winner, so it must fulfill their accepted
+    // source-search and freshness requirements as well as its own scan intent.
+    options = { ...options, ...this.carryOutstandingRefreshStrength(request) };
     this.activeRefreshRequests.add(request);
     try {
       await this.trackProducer(this.refreshLifecycle.refresh(lightweight, options));
@@ -578,6 +592,14 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         (!lightweight && !options.allowHomebrewInventoryDuringActiveCommand),
       forceAppDiscovery: options.forceAppDiscovery === true
     };
+  }
+
+  private carryOutstandingRefreshStrength(request: RefreshRecoveryRequest): RefreshRecoveryRequest {
+    for (const outstanding of this.activeRefreshRequests) {
+      request.forceMetadata ||= outstanding.forceMetadata;
+      request.forceAppDiscovery ||= outstanding.forceAppDiscovery;
+    }
+    return request;
   }
 
   private deferRefresh(request: RefreshRecoveryRequest): void {
@@ -620,18 +642,19 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
       showMenuBarIcon:
         patch.showMenuBarIcon ?? (patch.showDockIcon === false ? true : this.state.showMenuBarIcon)
     });
+    const scheduleChanged =
+      (patch.autoRefreshEnabled ?? this.state.autoRefreshEnabled) !==
+        this.state.autoRefreshEnabled ||
+      refreshIntervalMinutes !== this.state.refreshIntervalMinutes;
     this.patch({ ...patch, ...visibility, appearancePreference, refreshIntervalMinutes });
-    this.restartAutoRefreshLoop();
+    if (scheduleChanged) this.restartAutoRefreshLoop();
     await this.persist();
   }
 
   async checkForSelfUpdate(): Promise<SelfUpdateRecord | undefined> {
     this.requireOpen();
     if (this.selfUpdateCheckTask) return this.selfUpdateCheckTask;
-    const task = this.lookupSelfUpdate(new Date().toISOString()).then((selfUpdate) => {
-      this.patch({ selfUpdate });
-      return selfUpdate;
-    });
+    const task = this.lookupSelfUpdate(new Date().toISOString());
     this.selfUpdateCheckTask = task;
     void this.trackProducer(task).catch(() => undefined);
     try {
@@ -652,6 +675,30 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
       this.state.homebrewUninstallingItemIDs.length > 0 ||
       this.state.homebrewDiscoverInstallingItemIDs.length > 0
     );
+  }
+
+  async canUseNativeSelfUpdater(): Promise<boolean> {
+    this.requireOpen();
+    // A read may coexist with provider/app scanning, but never another inventory
+    // read or mutation. Its result is independent of that refresh's cached state.
+    const release = this.reserveHomebrewCommandLock({ allowRefreshSupersession: true });
+    if (!release) return false;
+    try {
+      return await this.trackProducer(
+        directSelfInstallIsVerified(this.runBrewCommand, this.currentAppIdentity ?? {})
+      );
+    } catch {
+      return false;
+    } finally {
+      release();
+    }
+  }
+
+  async prepareToQuitForSelfUpdate(): Promise<boolean> {
+    // Recheck after download. A new managed installation must not inherit an
+    // earlier direct-install decision. prepareToQuit fences admission synchronously.
+    if (!(await this.canUseNativeSelfUpdater())) return false;
+    return this.prepareToQuit();
   }
 
   prepareToQuit(): Promise<boolean> {
@@ -900,7 +947,27 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     this.requireOpen();
     const appRecord = this.state.apps.find((app) => app.id === appID);
     if (appRecord) {
+      await this.openAppWithFeedback(appRecord);
+    }
+  }
+
+  private async openAppWithFeedback(appRecord: AppRecord): Promise<void> {
+    const previousFailure = this.appOpenFailure;
+    try {
       await this.openAppBundle(appRecord.bundlePath);
+      if (
+        previousFailure?.appID === appRecord.id &&
+        previousFailure.revision === this.refreshErrorRevision
+      ) {
+        this.appOpenFailure = undefined;
+        this.patch({ refreshErrorMessage: undefined });
+      }
+    } catch {
+      this.appOpenFailure = { appID: appRecord.id, revision: this.refreshErrorRevision + 1 };
+      this.patch({
+        refreshErrorMessage:
+          "Could not open the app. It may have moved or be unavailable. Refresh and try again."
+      });
     }
   }
 
@@ -929,7 +996,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     if (isMacOSManagedApp(appRecord)) return;
     const update = this.state.updates.find((candidate) => candidate.appID === appID);
     if (!update) {
-      await this.openAppBundle(appRecord.bundlePath);
+      await this.openAppWithFeedback(appRecord);
       return;
     }
 
@@ -945,25 +1012,33 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         const result = await this.runMasCommand(["upgrade", String(update.appStoreItemID)]);
         this.toolStatus.recordMasCommandResult(result);
         if (result.success) {
-          this.patch({
-            appUpdatedPendingRefreshIDs: addToArray(this.state.appUpdatedPendingRefreshIDs, appID)
-          });
-          let statsNotice: string | undefined;
+          // A zero exit may mean mas found nothing outdated. Reconcile first;
+          // only observed installation changes authorize completed-update history.
           try {
-            await this.profileStatsService.recordEvents([
-              appUpdateProfileStatsEvent({
-                appRecord,
-                update,
-                occurredAt: new Date().toISOString()
-              })
-            ]);
-          } catch {
-            statsNotice = "App update completed, but local update history could not be saved.";
-          }
-          try {
-            await this.holdSuccessfulUpdate();
             await this.refresh(false, { forceMetadata: false });
           } finally {
+            const installed = this.state.apps.find((app) => app.id === appID);
+            let statsNotice: string | undefined;
+            if (installed && appInstallationAdvanced(appRecord, installed)) {
+              try {
+                await this.profileStatsService.recordEvents([
+                  appUpdateProfileStatsEvent({
+                    appRecord,
+                    update: {
+                      ...update,
+                      remoteVersion: installed.localVersion,
+                      remoteBuildVersion: installed.bundleVersion
+                    },
+                    occurredAt: new Date().toISOString()
+                  })
+                ]);
+              } catch {
+                statsNotice = "App update completed, but local update history could not be saved.";
+              }
+            } else {
+              statsNotice =
+                "The App Store check finished, but an installed update could not be confirmed. Refresh to check again.";
+            }
             if (statsNotice) {
               this.patch({
                 lastRefreshNoticeMessage: [this.state.lastRefreshNoticeMessage, statsNotice]
@@ -1008,6 +1083,26 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     }
 
     await this.routeExternalUpdate(appRecord, update);
+  }
+
+  /** Explicit CLI handoff only: never runs mas, installs Sparkle, or reports an
+   * opened app/URL as an installed update. The GUI retains its existing routes. */
+  async performCLIAppHandoff(appID: string): Promise<void> {
+    this.requireOpen();
+    const app = this.state.apps.find((candidate) => candidate.id === appID);
+    const update = this.state.updates.find((candidate) => candidate.appID === appID);
+    if (
+      !app ||
+      !update ||
+      this.isSelfApp(app) ||
+      isMacOSManagedApp(app) ||
+      this.state.ignoredIDs.includes(appID)
+    ) {
+      throw new Error("The app handoff is no longer available.");
+    }
+    const action = externalAppUpdateAction(update);
+    if (action.kind !== "app" && (await this.openExternal(action.url))) return;
+    await this.openAppBundle(app.bundlePath);
   }
 
   async performHomebrewUpdate(itemID: string): Promise<void> {
@@ -1152,7 +1247,24 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     if (isVersionEmpty(this.currentAppVersion)) {
       return undefined;
     }
-    return this.selfUpdate.lookup(this.currentAppVersion, now, signal);
+    const sequence = ++this.selfUpdateSequence;
+    const task = this.selfUpdate.lookup(this.currentAppVersion, now, signal);
+    this.latestSelfUpdateLookup = task;
+    const selfUpdate = await task;
+    if (!this.closing && !signal?.aborted && sequence === this.selfUpdateSequence) {
+      this.patch({ selfUpdate });
+    }
+    if (sequence !== this.selfUpdateSequence) {
+      // Manual actions may have joined an older scheduler task. Return the
+      // newest result too, rather than only protecting the published snapshot.
+      let latest = this.latestSelfUpdateLookup;
+      while (latest !== undefined) {
+        const result = await latest;
+        if (latest === this.latestSelfUpdateLookup) return result;
+        latest = this.latestSelfUpdateLookup;
+      }
+    }
+    return selfUpdate;
   }
 
   private async fetchHomebrewInventory(
@@ -1287,7 +1399,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     if (action.kind !== "app" && (await this.openExternal(action.url))) {
       return;
     }
-    await this.openAppBundle(appRecord.bundlePath);
+    await this.openAppWithFeedback(appRecord);
   }
 
   async cleanUpHomebrew(confirm: () => Promise<boolean>): Promise<string> {
@@ -1365,6 +1477,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
           true,
           sequence,
           {
+            ...this.carryOutstandingRefreshStrength(this.refreshRequestStrength(true, {})),
             allowHomebrewInventoryDuringActiveCommand: true,
             onHomebrewInventoryReconciled: (inventory) => {
               refreshed = homebrewInventoryIsComplete(inventory);
@@ -1414,7 +1527,8 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         homebrewCaskItemProvesAppOwnership(
           item,
           appRecord,
-          installedCaskEntry(item, this.refreshComputation.caskIndex)
+          installedCaskEntry(item, this.refreshComputation.caskIndex),
+          this.state.apps
         )
     );
   }
@@ -1440,13 +1554,6 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     }
   }
 
-  private async holdSuccessfulUpdate(): Promise<void> {
-    if (this.successRefreshDelayMS <= 0) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, this.successRefreshDelayMS));
-  }
-
   private restartAutoRefreshLoop(): void {
     this.refreshLifecycle.restartAutoRefreshLoop(
       !this.closing && this.state.autoRefreshEnabled,
@@ -1459,6 +1566,9 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
   }
 
   private patch(patch: Partial<BaselineSnapshot>): void {
+    // Repeated identical errors can still belong to a newer operation. Track
+    // their ownership even when there is no visible snapshot change.
+    if (Object.hasOwn(patch, "refreshErrorMessage")) this.refreshErrorRevision++;
     const keys = Object.keys(patch) as (keyof BaselineSnapshot)[];
     // Compare only supplied fields, before cloning or advancing the stream.
     // An unchanged patch must also leave any queued progress delta intact.
@@ -1553,8 +1663,23 @@ function sanitizePersistedSnapshotForRuntime(snapshot: PersistedSnapshot): Persi
             }
           : item
   );
+  // Cached links feed renderer uninstall controls before the first refresh. Apply
+  // the same target and duplicate-copy rules used for app-update admission.
+  const linkedItems = homebrewItems.map((item) => {
+    if (item.kind !== "cask" || !item.appID) return item;
+    const app = snapshot.apps.find((candidate) => candidate.id === item.appID);
+    return app &&
+      homebrewCaskItemProvesAppOwnership(
+        item,
+        app,
+        installedCaskEntry(item, emptyHomebrewCaskIndex),
+        snapshot.apps
+      )
+      ? item
+      : { ...item, appID: undefined, iconDataURL: undefined };
+  });
   const managedIDs = new Set(snapshot.apps.filter(isMacOSManagedApp).map((app) => app.id));
-  const migrated = { ...snapshot, homebrewItems };
+  const migrated = { ...snapshot, homebrewItems: linkedItems };
   return {
     ...migrated,
     appProviderChecks:
@@ -1587,7 +1712,13 @@ function persistedUpdateHasValidRuntimeRoute(
   }
   const appRecord = snapshot.apps.find((app) => app.id === update.appID);
   if (!appRecord) return false;
-  return canUseHomebrewAppUpdate(appRecord, token, snapshot.homebrewItems, emptyHomebrewCaskIndex);
+  return canUseHomebrewAppUpdate(
+    appRecord,
+    token,
+    snapshot.homebrewItems,
+    emptyHomebrewCaskIndex,
+    snapshot.apps
+  );
 }
 
 function toggleSet(set: Set<string>, value: string): void {
@@ -1604,4 +1735,22 @@ function addToArray<T>(values: T[], value: T): T[] {
 
 function removeFromArray<T>(values: T[], value: T): T[] {
   return values.filter((candidate) => candidate !== value);
+}
+
+function appInstallationAdvanced(previous: AppRecord, installed: AppRecord): boolean {
+  if (
+    previous.bundlePath !== installed.bundlePath ||
+    previous.bundleIdentifier !== installed.bundleIdentifier ||
+    isVersionEmpty(previous.localVersion) ||
+    isVersionEmpty(installed.localVersion)
+  )
+    return false;
+  const marketingChange = compareVersions(installed.localVersion, previous.localVersion);
+  return (
+    marketingChange > 0 ||
+    (marketingChange === 0 &&
+      !isVersionEmpty(previous.bundleVersion) &&
+      !isVersionEmpty(installed.bundleVersion) &&
+      isVersionGreater(installed.bundleVersion!, previous.bundleVersion!))
+  );
 }

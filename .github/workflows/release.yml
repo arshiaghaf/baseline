@@ -20,7 +20,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 24.22.2
           cache: npm
 
       - name: Verify Apple Silicon runner
@@ -31,6 +31,9 @@ jobs:
 
       - name: Prepare Electron runtime before parallel tests
         run: node -e 'require("electron")'
+
+      - name: Prepare pinned upstream Sparkle
+        run: npm run prepare:sparkle
 
       - name: Derive version from tag
         id: version

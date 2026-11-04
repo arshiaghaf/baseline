@@ -8,7 +8,7 @@ with Vite, React, TypeScript, and Tailwind.
 Requirements:
 
 - macOS 15 or later on Apple Silicon for running and validating the app
-- Node.js 24 (the version used by CI)
+- Node.js 24.22.2 (pinned in `.node-version` and CI)
 - npm
 
 Packages target only macOS arm64, including when built from another host. Native
@@ -57,6 +57,7 @@ or update-source policy directly inside React components.
 Run these before opening a pull request:
 
 ```bash
+npm run prepare:sparkle
 npm run typecheck
 npm test
 npm run lint

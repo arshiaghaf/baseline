@@ -13,6 +13,7 @@ import {
   Menu,
   nativeTheme,
   nativeImage,
+  powerMonitor,
   screen,
   shell,
   Tray
@@ -21,6 +22,7 @@ import path from "node:path";
 import { realpath } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { appMetadata } from "./appMetadata";
+import { openAppBundle } from "./appOpener";
 import { renderDiagnostics } from "../shared/diagnostics";
 import type {
   AppearancePreference,
@@ -32,13 +34,19 @@ import { trayUpdateTitle } from "./trayStatus";
 import { ipcChannels, type PreferencePatch } from "../shared/ipc";
 import { isAllowedExternalURL } from "../shared/security";
 import { SnapshotPersistence } from "./persistence";
-import { calculateTrayWindowPosition } from "./trayWindowPosition";
+import { calculateTrayWindowBounds } from "./trayWindowPosition";
 import { UpdateStore } from "./updateStore";
 import { catalogueCacheDirectory } from "./catalogueCacheDirectory";
 import { isTrustedBackendSender } from "./backendIpcAuthorization";
 import { backendIpcRegistrar } from "./backendIpc";
 import type { HomebrewDiagnosticsRequest } from "../shared/homebrewDiagnostics";
 import { trayMenuTemplate } from "./trayMenu";
+import { SelfUpdateScheduler } from "./selfUpdateScheduler";
+import { SignedSelfUpdater } from "./signedSelfUpdater";
+import { CLIService } from "./cliService";
+import { startCLIServer } from "./cliServer";
+import { ReleaseNotesService } from "./releaseNotesService";
+import { ReleaseNotesRequests } from "./releaseNotesRequests";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -51,6 +59,9 @@ let tray: Tray | undefined;
 let trayBaseIcon: Electron.NativeImage | undefined;
 let trayRefreshIcon: Electron.NativeImage | undefined;
 let store: UpdateStore;
+const releaseNotesRequests = new ReleaseNotesRequests(
+  new ReleaseNotesService({ getSnapshot: () => store.getSnapshot() })
+);
 let isQuitting = false;
 let quitTask: Promise<void> | undefined;
 let quitNoticeOpen = false;
@@ -58,7 +69,14 @@ let dockShowTask: Promise<void> | undefined;
 let lastDockShowTime = -Infinity;
 let dockHideTimer: ReturnType<typeof setTimeout> | undefined;
 let selfUpdateCheckOpen = false;
+let selfUpdateScheduler: SelfUpdateScheduler | undefined;
+let signedSelfUpdater: SignedSelfUpdater | undefined;
 let metadata: ReturnType<typeof appMetadata>;
+let cliService: CLIService | undefined;
+let closeCLI: (() => Promise<void>) | undefined;
+let cliBackground = process.argv.includes("--baseline-cli-background");
+let backgroundChecksStarted = false;
+const menuWindowSize = { width: 440, height: 560 };
 
 const trayRefreshIconDataURL =
   "data:image/png;base64," +
@@ -70,14 +88,18 @@ if (process.env.BASELINE_USER_DATA_DIR) {
   app.setPath("userData", process.env.BASELINE_USER_DATA_DIR);
 }
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const hasSingleInstanceLock = app.requestSingleInstanceLock({ cliBackground });
 
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (mainWindow) {
-      showWindow(mainWindow);
+  app.on("second-instance", (_event, _argv, _cwd, data) => {
+    if ((data as { cliBackground?: boolean } | undefined)?.cliBackground === true) return;
+    cliBackground = false;
+    if (store) {
+      syncAppVisibility(store.getSnapshot());
+      showMainWindow("main");
+      startChecksAfterCLILaunch();
     }
   });
 }
@@ -113,9 +135,7 @@ if (hasSingleInstanceLock) {
         await shell.openExternal(url);
         return true;
       },
-      openAppBundle: async (bundlePath) => {
-        await shell.openPath(bundlePath);
-      },
+      openAppBundle,
       currentAppVersion: metadata.version,
       currentAppIdentity: {
         bundleIdentifier: "com.arshiaghaf.baseline",
@@ -127,28 +147,73 @@ if (hasSingleInstanceLock) {
       }
     });
 
-    createMainWindow("main");
+    signedSelfUpdater = new SignedSelfUpdater({
+      bundlePath: app.isPackaged
+        ? await realpath(path.resolve(process.resourcesPath, "../.."))
+        : "",
+      resourcesPath: process.resourcesPath,
+      home: app.getPath("home"),
+      packaged: app.isPackaged,
+      isolatedProfile: Boolean(process.env.BASELINE_USER_DATA_DIR),
+      verifyOwnership: () => store.canUseNativeSelfUpdater()
+    });
+    selfUpdateScheduler = new SelfUpdateScheduler(() => store.checkForSelfUpdate());
+    if (!cliBackground) createMainWindow("main");
+    else app.dock?.hide();
     wireStoreEvents();
     wireIpc();
-    void verifyProfileStatsIntegrityAfterLaunch();
+    if (!cliBackground) void verifyProfileStatsIntegrityAfterLaunch();
     syncAppVisibility(store.getSnapshot());
-    if (process.env.BASELINE_SKIP_INITIAL_REFRESH === "1") {
-      store.emit("snapshot", store.getSnapshot());
-    } else {
-      await store.start();
-    }
-
+    cliService = new CLIService(store, metadata.version);
+    closeCLI = await startCLIServer(app.getPath("userData"), cliService).catch((error: unknown) => {
+      console.error("Could not start the local CLI backend:", error);
+      return undefined;
+    });
     app.on("activate", () => {
+      cliBackground = false;
+      syncAppVisibility(store.getSnapshot());
+      startChecksAfterCLILaunch();
+      if (process.env.BASELINE_SKIP_INITIAL_REFRESH !== "1") selfUpdateScheduler?.request();
       if (!mainWindow) {
         createMainWindow("main");
       } else {
         showWindow(mainWindow);
       }
     });
+    powerMonitor.on("resume", () => {
+      if (!cliBackground && process.env.BASELINE_SKIP_INITIAL_REFRESH !== "1")
+        selfUpdateScheduler?.request(true);
+    });
+
+    if (cliBackground || process.env.BASELINE_SKIP_INITIAL_REFRESH === "1") {
+      store.emit("snapshot", store.getSnapshot());
+    } else {
+      backgroundChecksStarted = true;
+      selfUpdateScheduler.start();
+      await store.start().catch((error: unknown) => {
+        console.error("Could not start update checks:", error);
+      });
+    }
+  });
+}
+
+function startChecksAfterCLILaunch(): void {
+  if (backgroundChecksStarted || process.env.BASELINE_SKIP_INITIAL_REFRESH === "1") return;
+  backgroundChecksStarted = true;
+  void verifyProfileStatsIntegrityAfterLaunch();
+  selfUpdateScheduler?.start();
+  void store.start().catch((error: unknown) => {
+    console.error("Could not start update checks:", error);
   });
 }
 
 app.on("window-all-closed", () => undefined);
+app.on("will-quit", () => {
+  cliService?.close();
+  void closeCLI?.();
+  selfUpdateScheduler?.dispose();
+  signedSelfUpdater?.dispose();
+});
 app.on("before-quit", (event) => {
   if (isQuitting || !store) return;
   event.preventDefault();
@@ -210,8 +275,8 @@ function createMainWindow(route: "main" | "settings"): BrowserWindow {
   }
 
   mainWindow = new BrowserWindow({
-    width: 1020,
-    height: 760,
+    width: 1042,
+    height: 759,
     minWidth: 660,
     minHeight: 620,
     title: "Baseline",
@@ -231,6 +296,8 @@ function createMainWindow(route: "main" | "settings"): BrowserWindow {
   });
 
   mainWindow.on("close", handleMainWindowClose);
+  const notesSenderID = mainWindow.webContents.id;
+  mainWindow.webContents.once("destroyed", () => releaseNotesRequests.close(notesSenderID));
   mainWindow.on("closed", () => {
     mainWindow = undefined;
     mainWindowRoute = undefined;
@@ -351,8 +418,7 @@ function createMenuWindow(): BrowserWindow {
   }
 
   menuWindow = new BrowserWindow({
-    width: 440,
-    height: 560,
+    ...menuWindowSize,
     resizable: false,
     movable: true,
     title: "Baseline",
@@ -376,7 +442,13 @@ function createMenuWindow(): BrowserWindow {
   });
 
   menuWindow.on("blur", hideMenuWindowForNativeDismissal);
+  const notesSenderID = menuWindow.webContents.id;
+  menuWindow.webContents.once("destroyed", () => releaseNotesRequests.close(notesSenderID));
+  screen.on("display-metrics-changed", fitMenuWindow);
+  screen.on("display-removed", fitMenuWindow);
   menuWindow.on("closed", () => {
+    screen.removeListener("display-metrics-changed", fitMenuWindow);
+    screen.removeListener("display-removed", fitMenuWindow);
     menuWindow = undefined;
   });
 
@@ -435,9 +507,21 @@ function createTrayContextMenu(): Menu {
 }
 
 async function checkForBaselineUpdates(): Promise<void> {
-  if (selfUpdateCheckOpen) return;
+  if (selfUpdateCheckOpen || isQuitting || quitTask) return;
   selfUpdateCheckOpen = true;
   try {
+    const updater = signedSelfUpdater;
+    if (updater && (await updater.available())) {
+      await updater.check(
+        () => store.prepareToQuitForSelfUpdate(),
+        () => {
+          if (dockHideTimer) clearTimeout(dockHideTimer);
+          isQuitting = true;
+          app.quit();
+        }
+      );
+      return;
+    }
     const update = await store.checkForSelfUpdate();
     if (isQuitting || quitTask) return;
     if (update?.available && update.releaseURL) {
@@ -463,6 +547,20 @@ async function checkForBaselineUpdates(): Promise<void> {
         buttons: ["OK"]
       });
     }
+  } catch {
+    if (!isQuitting && !quitTask) {
+      const response = await dialog.showMessageBox({
+        type: "error",
+        message: "Baseline could not complete the update check",
+        detail:
+          "Finish any active operations and try again. You can also download the latest release manually.",
+        buttons: ["Open releases", "Later"],
+        defaultId: 1,
+        cancelId: 1
+      });
+      if (response.response === 0)
+        await store.openExternal("https://github.com/arshiaghaf/baseline/releases/latest");
+    }
   } finally {
     selfUpdateCheckOpen = false;
   }
@@ -486,16 +584,18 @@ function toggleMenuWindow(): void {
     window.hide();
     return;
   }
-  if (tray) {
-    const bounds = tray.getBounds();
-    const windowBounds = window.getBounds();
-    const display = screen.getDisplayMatching(bounds);
-    const position = calculateTrayWindowPosition(bounds, windowBounds, display);
-    window.setPosition(position.x, position.y, false);
-  }
+  fitMenuWindow();
   window.setAlwaysOnTop(true, "pop-up-menu");
   window.show();
   focusCurrentAdminPrompt();
+}
+
+function fitMenuWindow(): void {
+  if (!tray || !menuWindow || menuWindow.isDestroyed()) return;
+  const bounds = tray.getBounds();
+  const display = screen.getDisplayMatching(bounds);
+  // Start from the preferred size so a previously constrained popover can grow again.
+  menuWindow.setBounds(calculateTrayWindowBounds(bounds, menuWindowSize, display), false);
 }
 
 function hideMenuWindowForNativeDismissal(): void {
@@ -580,6 +680,7 @@ function applyAppearancePreference(preference: AppearancePreference): void {
 }
 
 function syncAppVisibility(snapshot: BaselineSnapshot): void {
+  if (cliBackground) return;
   if (snapshot.showMenuBarIcon) updateTrayStatus(snapshot);
   if (!app.dock) {
     if (!snapshot.showMenuBarIcon) destroyTray();
@@ -656,7 +757,12 @@ function wireIpc(): void {
     })
   );
   handle("getSnapshot", () => store.getSnapshot());
+  handle("getReleaseNotes", (event, request) => releaseNotesRequests.get(event.sender.id, request));
+  handle("cancelReleaseNotes", (event, requestID) =>
+    releaseNotesRequests.cancel(event.sender.id, requestID)
+  );
   handle("getAppMetadata", () => metadata);
+  handle("checkForBaselineUpdates", () => checkForBaselineUpdates());
   handle(
     "getDiagnostics",
     () =>

@@ -8,14 +8,34 @@ import { compareVersions, isVersionEmpty, type VersionValue, version } from "../
 import type { LookupOutcome } from "./appStoreLookupClient";
 import { LookupCache, type LookupRequestOptions } from "./lookupCache";
 import { isSparkleVersionNewer, sparkleMarketingVersion } from "../shared/sparkleVersion";
+import type { ReleaseNotesFormat } from "../shared/releaseNotes";
 
 type AppcastItem = {
   shortVersionString?: string;
   buildVersion?: string;
   enclosureURL?: string;
   releaseNotesURL?: string;
+  releaseNotesContent?: string;
+  releaseNotesFormat?: ReleaseNotesFormat;
   publicationDate?: string;
+  channel?: string;
+  minimumSystemVersion?: string;
+  maximumSystemVersion?: string;
+  os?: string;
+  validEligibility: boolean;
 };
+
+export type SparkleHost = {
+  platform: NodeJS.Platform;
+  systemVersion?: string;
+};
+
+type SparkleSelectionOptions = {
+  // Only supply channels backed by explicit evidence for this installed app.
+  allowedChannels?: readonly string[];
+};
+
+type SparkleLookupOptions = LookupRequestOptions & SparkleSelectionOptions;
 
 type AppcastCandidate = {
   item: AppcastItem;
@@ -54,11 +74,18 @@ export class SparkleAppcastClient {
   // LookupCache metadata. Never let an earlier cached read satisfy a forced one.
   private readonly refreshFeeds = new WeakMap<AbortSignal, RefreshFeeds>();
 
+  constructor(
+    private readonly host: SparkleHost = {
+      platform: process.platform,
+      systemVersion: process.getSystemVersion?.()
+    }
+  ) {}
+
   async lookupOutcome(
     feedURL: string,
     localVersion: VersionValue,
     localBuildVersion?: VersionValue,
-    options: LookupRequestOptions = {}
+    options: SparkleLookupOptions = {}
   ): Promise<LookupOutcome<SparkleLookupResult>> {
     if (!isAllowedFeedURL(feedURL)) {
       return { type: "completed" };
@@ -98,7 +125,7 @@ export class SparkleAppcastClient {
         type: "completed",
         checkedAt: metadata.checkedAt,
         providerFound: candidates.length > 0,
-        value: selectUpdate(candidates, localVersion, localBuildVersion)
+        value: selectUpdate(candidates, localVersion, localBuildVersion, this.host, options)
       };
     } catch {
       return { type: "transientFailure" };
@@ -108,13 +135,20 @@ export class SparkleAppcastClient {
   parseAppcast(
     data: Buffer,
     localVersion: VersionValue,
-    localBuildVersion?: VersionValue
+    localBuildVersion?: VersionValue,
+    options: SparkleSelectionOptions = {}
   ): SparkleLookupResult | undefined {
     if (data.byteLength > byteLimits.sparkleAppcastMaxBytes) {
       return undefined;
     }
 
-    return selectUpdate(decodeAppcast(data).candidates, localVersion, localBuildVersion);
+    return selectUpdate(
+      decodeAppcast(data).candidates,
+      localVersion,
+      localBuildVersion,
+      this.host,
+      options
+    );
   }
 
   private decodeMetadata(data: Buffer): AppcastCandidate[] {
@@ -152,14 +186,18 @@ export class SparkleAppcastClient {
 function selectUpdate(
   decoded: AppcastCandidate[],
   localVersion: VersionValue,
-  localBuildVersion?: VersionValue
+  localBuildVersion: VersionValue | undefined,
+  host: SparkleHost,
+  options: SparkleSelectionOptions
 ): SparkleLookupResult | undefined {
-  const candidates = decoded.filter((candidate) =>
-    isSparkleVersionNewer(
-      candidate,
-      sparkleMarketingVersion(localVersion, localBuildVersion),
-      localBuildVersion
-    )
+  const candidates = decoded.filter(
+    (candidate) =>
+      isEligible(candidate.item, host, options) &&
+      isSparkleVersionNewer(
+        candidate,
+        sparkleMarketingVersion(localVersion, localBuildVersion),
+        localBuildVersion
+      )
   );
   // Use one comparison domain for the entire pool: switching between
   // marketing and machine versions per pair can produce a cyclic sort.
@@ -177,6 +215,12 @@ function selectUpdate(
     updateURL: best.updateURL,
     updateURLKind: best.updateURL ? "download" : undefined,
     releaseNotesURL: best.releaseNotesURL,
+    ...(best.item.releaseNotesContent
+      ? {
+          releaseNotesContent: best.item.releaseNotesContent,
+          releaseNotesFormat: best.item.releaseNotesFormat
+        }
+      : {}),
     releaseDate: best.item.publicationDate
   };
 }
@@ -201,8 +245,8 @@ function usableCandidate(item: AppcastItem): AppcastCandidate | undefined {
 }
 
 function compareAppcastItems(
-  lhs: { parsedVersion: VersionValue; buildVersion: VersionValue; hasMarketingVersion: boolean },
-  rhs: { parsedVersion: VersionValue; buildVersion: VersionValue; hasMarketingVersion: boolean },
+  lhs: AppcastCandidate,
+  rhs: AppcastCandidate,
   useBuildOrder: boolean
 ): number {
   if (useBuildOrder) {
@@ -225,26 +269,116 @@ function compareAppcastItems(
   if (versionComparison !== 0) {
     return versionComparison;
   }
-  return compareVersions(lhs.buildVersion, rhs.buildVersion);
+  const buildComparison = compareVersions(lhs.buildVersion, rhs.buildVersion);
+  if (buildComparison !== 0) return buildComparison;
+  // Shared notes must not let an unusable enclosure hide a valid download for
+  // the same release. Newer notes-only releases retain their version ranking.
+  return Number(Boolean(lhs.updateURL)) - Number(Boolean(rhs.updateURL));
 }
 
-function normalizeItem(item: any): AppcastItem {
-  return {
-    shortVersionString: firstVersionText(
-      item?.["sparkle:shortVersionString"],
-      item?.["@_sparkle:shortVersionString"],
-      item?.enclosure?.["@_sparkle:shortVersionString"]
-    ),
-    buildVersion: firstVersionText(
-      item?.["sparkle:version"],
-      item?.["@_sparkle:version"],
-      item?.enclosure?.["@_sparkle:version"]
-    ),
-    enclosureURL: item?.enclosure?.["@_url"],
-    releaseNotesURL:
-      stringText(item?.["sparkle:releaseNotesLink"]) ?? stringText(item?.releaseNotesLink),
-    publicationDate: stringText(item?.pubDate)
-  };
+function isEligible(
+  item: AppcastItem,
+  host: SparkleHost,
+  options: SparkleSelectionOptions
+): boolean {
+  if (!item.validEligibility || host.platform !== "darwin") return false;
+  if (item.channel && !options.allowedChannels?.includes(item.channel)) return false;
+  if (item.os !== undefined && item.os !== "macos") return false;
+  for (const [bound, direction] of [
+    [item.minimumSystemVersion, -1],
+    [item.maximumSystemVersion, 1]
+  ] as const) {
+    if (!bound) continue;
+    if (!isSystemVersion(bound) || !isSystemVersion(host.systemVersion)) return false;
+    if (compareVersions(version(host.systemVersion), version(bound)) === direction) return false;
+  }
+  return true;
+}
+
+function isSystemVersion(value: string | undefined): value is string {
+  return value !== undefined && /^\d+(?:\.\d+)*$/.test(value);
+}
+
+function normalizeItem(item: any): AppcastItem[] {
+  const enclosures = Array.isArray(item?.enclosure) ? item.enclosure : [item?.enclosure];
+  return enclosures.map((enclosure: any) => {
+    const eligibility = [
+      item?.["sparkle:channel"],
+      item?.["sparkle:minimumSystemVersion"],
+      item?.["sparkle:maximumSystemVersion"],
+      enclosure?.["@_sparkle:os"]
+    ];
+    const [channel, minimumSystemVersion, maximumSystemVersion, os] = eligibility.map((value) =>
+      stringText(value)?.trim()
+    );
+    return {
+      shortVersionString: firstVersionText(
+        item?.["sparkle:shortVersionString"],
+        item?.["@_sparkle:shortVersionString"],
+        enclosure?.["@_sparkle:shortVersionString"]
+      ),
+      buildVersion: firstVersionText(
+        item?.["sparkle:version"],
+        item?.["@_sparkle:version"],
+        enclosure?.["@_sparkle:version"]
+      ),
+      enclosureURL: enclosure?.["@_url"],
+      releaseNotesURL:
+        stringText(item?.["sparkle:releaseNotesLink"]) ?? stringText(item?.releaseNotesLink),
+      ...inlineReleaseNotes(item),
+      publicationDate: stringText(item?.pubDate),
+      channel,
+      minimumSystemVersion,
+      maximumSystemVersion,
+      os,
+      validEligibility: eligibility.every(
+        (value) => value === undefined || stringText(value) !== undefined
+      )
+    };
+  });
+}
+
+function inlineReleaseNotes(
+  item: any
+): Pick<AppcastItem, "releaseNotesContent" | "releaseNotesFormat"> {
+  const description = item?.description;
+  const format = description?.["@_sparkle:format"] ?? "html";
+  const content = stringText(description);
+  return content && content.length <= 64_000 && ["html", "plain-text", "markdown"].includes(format)
+    ? { releaseNotesContent: content, releaseNotesFormat: format }
+    : {};
+}
+
+/** Note lookup is exact and read-only; it never creates an actionable update candidate. */
+export function exactSparkleReleaseNotes(
+  data: Buffer,
+  targetVersion: string,
+  targetBuildVersion?: string,
+  host: SparkleHost = { platform: process.platform, systemVersion: process.getSystemVersion?.() }
+): { content?: string; format?: ReleaseNotesFormat; url?: string } | undefined {
+  if (data.byteLength > byteLimits.sparkleAppcastMaxBytes) return undefined;
+  const parsed = parser.parse(data.toString("utf8"));
+  const raw = parsed?.rss?.channel?.item;
+  const entries = (Array.isArray(raw) ? raw : raw ? [raw] : []).flatMap(normalizeItem);
+  const matches = entries.filter(
+    (item) =>
+      isEligible(item, host, {}) &&
+      sparkleMarketingVersion(
+        version(item.shortVersionString ?? item.buildVersion ?? ""),
+        item.buildVersion ? version(item.buildVersion) : undefined
+      ).raw === targetVersion &&
+      (targetBuildVersion === undefined || item.buildVersion === targetBuildVersion)
+  );
+  // Distinct machine builds sharing one marketing version are ambiguous without a build target.
+  if (new Set(matches.map((item) => item.buildVersion)).size > 1) return undefined;
+  const match = matches[0];
+  return match
+    ? {
+        content: match.releaseNotesContent,
+        format: match.releaseNotesFormat,
+        url: sanitizeExternalURL(match.releaseNotesURL)
+      }
+    : undefined;
 }
 
 function firstVersionText(...values: unknown[]): string | undefined {
@@ -282,7 +416,7 @@ function decodeAppcast(data: Buffer): { validChannel: boolean; candidates: Appca
   return {
     validChannel: Boolean(channel && typeof channel === "object"),
     candidates: raw
-      .map(normalizeItem)
+      .flatMap(normalizeItem)
       .map(usableCandidate)
       .filter((candidate): candidate is AppcastCandidate => candidate !== undefined)
   };

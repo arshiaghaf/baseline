@@ -66,6 +66,33 @@ const update: UpdateRecord = {
   checkedAt: "2026-04-30T12:00:00.000Z"
 };
 
+it("hides App Store notes controls for missing summaries and places present notes after the target version", () => {
+  const storeUpdate = { ...update, source: "appStore" as const, releaseNotesSummary: "  " };
+  const view = render(<AppUpdateCard app={app} snapshot={snapshot({ updates: [storeUpdate] })} />);
+  expect(
+    screen.queryByRole("button", { name: "Release notes for Example" })
+  ).not.toBeInTheDocument();
+  view.rerender(
+    <AppUpdateCard
+      app={app}
+      snapshot={snapshot({
+        updates: [{ ...storeUpdate, releaseNotesSummary: "Published changes" }]
+      })}
+    />
+  );
+  const trigger = screen.getByRole("button", { name: "Release notes for Example" });
+  expect(trigger.parentElement).toHaveClass("release-notes-version-line");
+  expect(trigger.previousElementSibling).toHaveTextContent("2.0.0");
+});
+
+it("omits unsupported Homebrew source controls before any notes lookup", () => {
+  const item = { ...cask, tap: "example/custom" };
+  render(<HomebrewUpdateCard item={item} snapshot={snapshot({ homebrewItems: [item] })} />);
+  expect(
+    screen.queryByRole("button", { name: "Release notes for Example" })
+  ).not.toBeInTheDocument();
+});
+
 function snapshot(patch: Partial<BaselineSnapshot> = {}): BaselineSnapshot {
   return {
     ...defaultPersistedSnapshot(),
@@ -104,8 +131,15 @@ function snapshot(patch: Partial<BaselineSnapshot> = {}): BaselineSnapshot {
 
 function installBaselineMock() {
   window.baseline = {
+    checkForBaselineUpdates: vi.fn(async () => undefined),
     permissionGuide: vi.fn(async () => ({})),
     getSnapshot: vi.fn(),
+    getReleaseNotes: vi.fn(async () => ({
+      status: "unavailable" as const,
+      title: "Release notes",
+      version: ""
+    })),
+    cancelReleaseNotes: vi.fn(async () => undefined),
     getAppMetadata: vi.fn(() =>
       Promise.resolve({
         version: "0.1.0",
@@ -896,7 +930,7 @@ describe("renderer button parity", () => {
             available: true,
             currentVersion: version("0.1.0"),
             latestVersion: version("0.2.0"),
-            releaseURL: "https://github.com/arshiaghaf/Baseline/releases/latest",
+            releaseURL: "https://github.com/arshiaghaf/baseline/releases/latest",
             checkedAt: "2026-04-30T12:00:00.000Z"
           }
         })}
@@ -911,9 +945,8 @@ describe("renderer button parity", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "New Baseline Update Available" }));
 
-    expect(window.baseline.openExternal).toHaveBeenCalledWith(
-      "https://github.com/arshiaghaf/Baseline/releases/latest"
-    );
+    expect(window.baseline.checkForBaselineUpdates).toHaveBeenCalledOnce();
+    expect(window.baseline.openExternal).not.toHaveBeenCalled();
 
     rerender(<Dashboard compact onOpenSettings={() => undefined} snapshot={snapshot()} />);
 
@@ -1061,6 +1094,247 @@ describe("renderer button parity", () => {
     } finally {
       rectSpy.mockRestore();
     }
+  });
+
+  it.each(["inline", "floating"])(
+    "supports keyboard navigation, dismissal and activation in %s Search row menus",
+    (placement) => {
+      const originalRect = HTMLElement.prototype.getBoundingClientRect;
+      const rectSpy = vi
+        .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+        .mockImplementation(function (this: HTMLElement) {
+          if (this.classList.contains("search-palette-results")) {
+            return domRect({
+              top: 140,
+              right: 802,
+              bottom: placement === "floating" ? 220 : 600,
+              left: 218
+            });
+          }
+          if (this.getAttribute("aria-label") === "Actions") {
+            return domRect({ top: 184, right: 792, bottom: 212, left: 764 });
+          }
+          return originalRect.call(this);
+        });
+      try {
+        render(
+          <Dashboard
+            compact={false}
+            onOpenSettings={() => undefined}
+            snapshot={snapshot({ searchText: "example" })}
+          />
+        );
+        fireEvent.click(screen.getByRole("button", { name: "Search" }));
+        const dialog = screen.getByRole("dialog", { name: "Search" });
+        const trigger = within(dialog).getByRole("button", { name: "Actions" });
+        trigger.focus();
+        fireEvent.keyDown(trigger, { key: "ArrowDown" });
+        let ignore = screen.getByRole("menuitem", { name: "Ignore" });
+        expect(ignore).toHaveFocus();
+        expect(dialog.contains(ignore)).toBe(placement === "inline");
+        const uninstall = screen.getByRole("menuitem", { name: "Uninstall" });
+        fireEvent.keyDown(ignore, { key: "ArrowUp" });
+        expect(uninstall).toHaveFocus();
+        fireEvent.keyDown(uninstall, { key: "ArrowDown" });
+        expect(ignore).toHaveFocus();
+        fireEvent.keyDown(ignore, { key: "End" });
+        expect(uninstall).toHaveFocus();
+        fireEvent.keyDown(uninstall, { key: "Home" });
+        expect(ignore).toHaveFocus();
+        fireEvent.keyDown(ignore, { key: "Escape" });
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+        expect(trigger).toHaveFocus();
+        expect(dialog).toBeInTheDocument();
+        fireEvent.keyDown(trigger, { key: "ArrowUp" });
+        expect(screen.getByRole("menuitem", { name: "Uninstall" })).toHaveFocus();
+        fireEvent.keyDown(screen.getByRole("menuitem", { name: "Uninstall" }), { key: "Home" });
+        ignore = screen.getByRole("menuitem", { name: "Ignore" });
+        fireEvent.click(ignore, { detail: 0 });
+        expect(window.baseline.toggleIgnoredApp).toHaveBeenCalledWith(app.id);
+        expect(trigger).toHaveFocus();
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+        fireEvent.keyDown(trigger, { key: "ArrowDown" });
+        expect(screen.getByRole("menuitem", { name: "Ignore" })).toHaveFocus();
+        trigger.focus();
+        expect(screen.getByRole("menu")).toBeInTheDocument();
+        const updateButton = within(dialog).getByRole("button", { name: "Update" });
+        act(() => updateButton.focus());
+        expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+        expect(trigger).toHaveAttribute("aria-expanded", "false");
+        expect(updateButton).toHaveFocus();
+        fireEvent.keyDown(updateButton, { key: "Escape" });
+        expect(screen.queryByRole("dialog", { name: "Search" })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Search" })).toHaveFocus();
+      } finally {
+        rectSpy.mockRestore();
+      }
+    }
+  );
+
+  it("skips disabled row menu actions during keyboard navigation", () => {
+    render(
+      <Dashboard
+        compact
+        onOpenSettings={() => undefined}
+        snapshot={snapshot({ appUpdatingIDs: [app.id] })}
+      />
+    );
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions" }), { key: "ArrowUp" });
+    const ignore = screen.getByRole("menuitem", { name: "Ignore" });
+    expect(screen.getByRole("menuitem", { name: "Uninstall" })).toBeDisabled();
+    expect(ignore).toHaveFocus();
+    for (const key of ["ArrowDown", "ArrowUp", "Home", "End"]) {
+      fireEvent.keyDown(ignore, { key });
+      expect(ignore).toHaveFocus();
+    }
+  });
+
+  it("retains keyboard focus on compact Search installation controls", () => {
+    render(
+      <Dashboard
+        compact
+        onOpenSettings={() => undefined}
+        snapshot={snapshot({
+          searchText: "sample",
+          homebrewDiscoverItems: [
+            {
+              id: "cask:sample",
+              token: "sample",
+              displayName: "Sample",
+              kind: "cask",
+              version: version("1.0")
+            }
+          ]
+        })}
+      />
+    );
+    const install = screen.getByRole("button", { name: "Install" });
+    expect(install.tabIndex).toBe(0);
+    install.focus();
+    expect(install).toHaveFocus();
+    fireEvent.click(install, { detail: 0 });
+    expect(screen.getByRole("dialog", { name: "Install Sample?" })).toBeInTheDocument();
+    expect(window.baseline.installHomebrewItem).not.toHaveBeenCalled();
+  });
+
+  it("keeps floating Search menu Tab traversal next to its owning row", () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains("search-palette-results"))
+          return domRect({ top: 140, right: 802, bottom: 220, left: 218 });
+        if (this.getAttribute("aria-label") === "Actions")
+          return domRect({ top: 184, right: 792, bottom: 212, left: 764 });
+        return originalRect.call(this);
+      });
+    try {
+      const secondApp = { ...app, id: "app:example-two", displayName: "Example Two" };
+      render(
+        <Dashboard
+          compact={false}
+          onOpenSettings={() => undefined}
+          snapshot={snapshot({ searchText: "example", apps: [app, secondApp] })}
+        />
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Search" }));
+      const dialog = screen.getByRole("dialog", { name: "Search" });
+      const triggers = within(dialog).getAllByRole("button", { name: "Actions" });
+      triggers[0]!.focus();
+      fireEvent.keyDown(triggers[0]!, { key: "ArrowDown" });
+      const ignore = screen.getByRole("menuitem", { name: "Ignore" });
+      const uninstall = screen.getByRole("menuitem", { name: "Uninstall" });
+      fireEvent.keyDown(ignore, { key: "Tab" });
+      expect(uninstall).toHaveFocus();
+      fireEvent.keyDown(uninstall, { key: "Tab", shiftKey: true });
+      expect(ignore).toHaveFocus();
+      fireEvent.keyDown(ignore, { key: "Tab", shiftKey: true });
+      expect(triggers[0]).toHaveFocus();
+      fireEvent.keyDown(triggers[0]!, { key: "Tab" });
+      expect(ignore).toHaveFocus();
+      fireEvent.keyDown(ignore, { key: "End" });
+      fireEvent.keyDown(uninstall, { key: "Tab" });
+      expect(within(dialog).getAllByRole("button", { name: "Open app" })[1]).toHaveFocus();
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      triggers[1]!.focus();
+      fireEvent.keyDown(triggers[1]!, { key: "ArrowDown" });
+      fireEvent.keyDown(screen.getByRole("menuitem", { name: "Ignore" }), { key: "Tab" });
+      expect(within(dialog).getByPlaceholderText("Search")).toHaveFocus();
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it("keeps Search release notes in the keyboard scope through scrolling and retry", async () => {
+    vi.mocked(window.baseline.getReleaseNotes)
+      .mockResolvedValueOnce({
+        status: "error",
+        title: "Example",
+        version: "2.0.0",
+        message: "Offline"
+      })
+      .mockResolvedValueOnce({
+        status: "available",
+        title: "Example",
+        version: "2.0.0",
+        source: "App Store",
+        blocks: [{ type: "paragraph", text: "Published changes. ".repeat(100) }]
+      });
+    render(
+      <Dashboard
+        compact={false}
+        onOpenSettings={() => undefined}
+        snapshot={snapshot({
+          selectedTab: "apps",
+          searchText: "example",
+          updates: [{ ...update, source: "appStore", releaseNotesSummary: "Published changes" }]
+        })}
+      />
+    );
+    const searchButton = screen.getByRole("button", { name: "Search" });
+    fireEvent.click(searchButton);
+    // Opening Search also navigates to /main; let that navigation settle.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    const searchDialog = screen.getByRole("dialog", { name: "Search" });
+    const trigger = within(searchDialog).getByRole("button", { name: "Release notes for Example" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const close = await screen.findByRole("button", { name: "Close release notes" });
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    const content = screen.getByLabelText("Release notes content");
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab" });
+    expect(content).toHaveFocus();
+    fireEvent.scroll(content);
+    expect(close).toBeInTheDocument();
+    fireEvent.keyDown(content, { key: "Tab" });
+    expect(retry).toHaveFocus();
+    fireEvent.keyDown(retry, { key: "Tab", shiftKey: true });
+    expect(content).toHaveFocus();
+    fireEvent.keyDown(content, { key: "Tab", shiftKey: true });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(trigger).toHaveFocus();
+    fireEvent.keyDown(trigger, { key: "Tab" });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab" });
+    fireEvent.keyDown(content, { key: "Tab" });
+    fireEvent.click(retry);
+    await waitFor(() => expect(content).toHaveTextContent("Published changes."));
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab" });
+    expect(content).toHaveFocus();
+    expect(window.baseline.getReleaseNotes).toHaveBeenLastCalledWith(
+      expect.objectContaining({ force: true })
+    );
+    fireEvent.scroll(content);
+    fireEvent.keyDown(content, { key: "Escape" });
+    expect(screen.queryByRole("button", { name: "Close release notes" })).not.toBeInTheDocument();
+    expect(searchDialog).toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Search" })).not.toBeInTheDocument();
+    expect(searchButton).toHaveFocus();
   });
 
   it("closes search mode on backdrop clicks without clearing the saved query", async () => {
@@ -2893,26 +3167,188 @@ describe("renderer button parity", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("clears compact menu bar control focus", async () => {
+  it.each([
+    ["Update", "Settings"],
+    ["Open app", "Refresh"]
+  ])(
+    "clears compact keyboard focus on %s when pointer activation chooses %s",
+    (source, destination) => {
+      render(<Dashboard compact onOpenSettings={() => undefined} snapshot={snapshot()} />);
+      const previous = screen.getByRole("button", { name: source });
+      previous.focus();
+      expect(previous).toHaveFocus();
+      const clicked = screen.getByRole("button", { name: destination });
+      fireEvent.mouseDown(clicked);
+      fireEvent.click(clicked, { detail: 1 });
+      expect(document.activeElement).toBe(document.body);
+    }
+  );
+
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true]
+  ])(
+    "recovers keyboard focus after a live ignore snapshot (compact %s, Homebrew %s)",
+    (compact, homebrew) => {
+      const item = { ...cask, appID: undefined, kind: "formula" as const, id: "formula:example" };
+      let current = snapshot({
+        apps: homebrew ? [] : [app],
+        updates: homebrew ? [] : [update],
+        homebrewItems: homebrew ? [item] : [cask],
+        searchText: compact ? "" : "example"
+      });
+      const dashboard = () => (
+        <Dashboard compact={compact} onOpenSettings={() => undefined} snapshot={current} />
+      );
+      const view = render(dashboard());
+      const publishToggle = async () => {
+        current = {
+          ...current,
+          ...(homebrew ? { ignoredHomebrewItemIDs: [item.id] } : { ignoredIDs: [app.id] })
+        };
+        view.rerender(dashboard());
+      };
+      if (homebrew)
+        vi.mocked(window.baseline.toggleIgnoredHomebrew).mockImplementation(publishToggle);
+      else vi.mocked(window.baseline.toggleIgnoredApp).mockImplementation(publishToggle);
+      if (!compact) fireEvent.click(screen.getByRole("button", { name: "Search" }));
+      const actions = screen.getByRole("button", { name: "Actions" });
+      actions.focus();
+      fireEvent.keyDown(actions, { key: "ArrowDown" });
+      fireEvent.click(screen.getByRole("menuitem", { name: "Ignore" }), { detail: 0 });
+      if (compact) {
+        expect(screen.queryByRole("button", { name: "Actions" })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Search" })).toHaveFocus();
+      } else {
+        expect(
+          screen.getByRole("heading", { name: homebrew ? "Ignored Homebrew" : "Ignored Apps" })
+        ).toBeInTheDocument();
+        expect(screen.getByPlaceholderText("Search")).toHaveFocus();
+      }
+    }
+  );
+
+  it.each(["another control", "pointer background"])(
+    "does not reclaim focus after the user chooses %s before an ignore snapshot",
+    (destination) => {
+      const current = snapshot({ searchText: "example" });
+      const dashboard = (next: BaselineSnapshot) => (
+        <Dashboard compact={false} onOpenSettings={() => undefined} snapshot={next} />
+      );
+      const view = render(dashboard(current));
+      fireEvent.click(screen.getByRole("button", { name: "Search" }));
+      const actions = screen.getByRole("button", { name: "Actions" });
+      actions.focus();
+      fireEvent.keyDown(actions, { key: "ArrowDown" });
+      fireEvent.click(screen.getByRole("menuitem", { name: "Ignore" }), { detail: 0 });
+      const clear = screen.getByRole("button", { name: "Clear Search" });
+      if (destination === "another control") clear.focus();
+      else {
+        fireEvent.mouseDown(screen.getByRole("dialog", { name: "Search" }));
+        actions.blur();
+      }
+      view.rerender(dashboard({ ...current, ignoredIDs: [app.id] }));
+      expect(screen.getByRole("heading", { name: "Ignored Apps" })).toBeInTheDocument();
+      if (destination === "another control") expect(clear).toHaveFocus();
+      else expect(document.activeElement).toBe(document.body);
+    }
+  );
+
+  it.each(["Ignore", "Actions"])(
+    "keeps the compact keyboard-open menu mounted until pointer %s activation",
+    (choice) => {
+      render(<Dashboard compact onOpenSettings={() => undefined} snapshot={snapshot()} />);
+      const actions = screen.getByRole("button", { name: "Actions" });
+      actions.focus();
+      fireEvent.keyDown(actions, { key: "ArrowDown" });
+      const ignore = screen.getByRole("menuitem", { name: "Ignore" });
+      expect(ignore).toHaveFocus();
+      const target = choice === "Ignore" ? ignore : actions;
+      fireEvent.mouseDown(target);
+      expect(screen.getByRole("menuitem", { name: "Ignore" })).toBeInTheDocument();
+      fireEvent.click(target, { detail: 1 });
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(document.activeElement).toBe(document.body);
+      if (choice === "Ignore")
+        expect(window.baseline.toggleIgnoredApp).toHaveBeenCalledWith(app.id);
+      else expect(window.baseline.toggleIgnoredApp).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(["immediate", "after-cleanup", "cancel-busy"])(
+    "recovers focus from retained disabled Actions after confirmation (%s)",
+    async (arrival) => {
+      let current = snapshot();
+      const dashboard = () => (
+        <Dashboard compact onOpenSettings={() => undefined} snapshot={current} />
+      );
+      const view = render(dashboard());
+      const disableActions = () => {
+        current = { ...current, homebrewUninstallingItemIDs: [cask.id] };
+        view.rerender(dashboard());
+      };
+      vi.mocked(window.baseline.uninstallHomebrewItem).mockImplementation(async () => {
+        if (arrival === "immediate") disableActions();
+      });
+      const actions = screen.getByRole("button", { name: "Actions" });
+      actions.focus();
+      fireEvent.keyDown(actions, { key: "ArrowUp" });
+      fireEvent.click(screen.getByRole("menuitem", { name: "Uninstall" }), { detail: 0 });
+      const confirmation = screen.getByRole("dialog", { name: "Uninstall Example?" });
+      const cancel = within(confirmation).getByRole("button", { name: "Cancel" });
+      expect(cancel).toHaveFocus();
+      if (arrival === "cancel-busy") {
+        disableActions();
+        expect(cancel).toHaveFocus();
+        fireEvent.click(cancel, { detail: 0 });
+        expect(window.baseline.uninstallHomebrewItem).not.toHaveBeenCalled();
+      } else {
+        fireEvent.click(within(confirmation).getByRole("button", { name: "Uninstall Example" }), {
+          detail: 0
+        });
+        expect(window.baseline.uninstallHomebrewItem).toHaveBeenCalledWith(cask.id);
+        if (arrival === "after-cleanup") {
+          expect(actions).toHaveFocus();
+          disableActions();
+        }
+      }
+      expect(actions).toBeInTheDocument();
+      expect(actions).toBeDisabled();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Search" })).toHaveFocus());
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    }
+  );
+
+  it("retains compact keyboard focus on toolbar and row actions", () => {
     render(<Dashboard compact onOpenSettings={() => undefined} snapshot={snapshot()} />);
 
-    await waitFor(() => expect(document.activeElement).toBe(document.body));
-    expect(screen.getByRole("button", { name: "Search" })).toHaveAttribute("tabindex", "-1");
-    expect(screen.getByRole("button", { name: "Refresh" })).toHaveAttribute("tabindex", "-1");
-    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute("tabindex", "-1");
+    for (const name of ["Search", "Refresh", "Settings", "Open app", "Update", "Actions"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.tabIndex).toBe(0);
+      button.focus();
+      expect(button).toHaveFocus();
+    }
 
-    screen.getByRole("button", { name: "Open app" }).focus();
-    await waitFor(() => expect(document.activeElement).toBe(document.body));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Actions" }), { key: "ArrowDown" });
+    const ignore = screen.getByRole("menuitem", { name: "Ignore" });
+    expect(ignore).toHaveFocus();
+    fireEvent.keyDown(ignore, { key: "Escape" });
+    expect(screen.getByRole("button", { name: "Actions" })).toHaveFocus();
   });
 
-  it("keeps compact menu bar row actions clickable while clearing focus", async () => {
+  it("keeps compact pointer actions clickable without moving focus", () => {
     render(<Dashboard compact onOpenSettings={() => undefined} snapshot={snapshot()} />);
 
-    fireEvent.mouseDown(screen.getByRole("button", { name: "Actions" }));
-    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    const actions = screen.getByRole("button", { name: "Actions" });
+    expect(fireEvent.mouseDown(actions)).toBe(false);
+    fireEvent.click(actions, { detail: 1 });
 
     expect(screen.getByRole("menuitem", { name: "Ignore" })).toBeInTheDocument();
-    await waitFor(() => expect(document.activeElement).toBe(document.body));
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Ignore" }), { detail: 1 });
+    expect(window.baseline.toggleIgnoredApp).toHaveBeenCalledWith(app.id);
   });
 
   it("keeps compact menu bar search input focused when search is already open", async () => {
@@ -3328,6 +3764,96 @@ describe("renderer button parity", () => {
     expect(within(installedApps as HTMLElement).queryByText("Managed")).not.toBeInTheDocument();
     expect(within(installedApps as HTMLElement).getByText("Managed Helper")).toBeInTheDocument();
     expect(within(installedHomebrew as HTMLElement).getByText("Managed")).toBeInTheDocument();
+  });
+
+  it.each(["formula", "cask"] as const)(
+    "shows saved %s version changes and relative time in Installed without inventing history",
+    (kind) => {
+      const item: HomebrewManagedItem = {
+        ...cask,
+        kind,
+        id: `${kind}:example`,
+        installedVersion: version("2.0.0"),
+        latestVersion: version("2.0.0"),
+        isOutdated: false
+      };
+      const history = {
+        id: item.id,
+        itemID: item.id,
+        token: item.token,
+        kind,
+        displayName: item.name,
+        fromVersion: version("1.0.0"),
+        toVersion: version("2.0.0"),
+        updatedAt: new Date().toISOString()
+      };
+      const renderInstalled = (records: BaselineSnapshot["homebrewRecentlyUpdated"]) => (
+        <Dashboard
+          compact={false}
+          onOpenSettings={() => undefined}
+          snapshot={snapshot({
+            selectedTab: "installed",
+            updates: [],
+            homebrewItems: [item],
+            homebrewRecentlyUpdated: records
+          })}
+        />
+      );
+      const { rerender } = render(renderInstalled([history]));
+      const section = () =>
+        screen.getByRole("button", { name: "Installed Homebrew" }).closest("section")!;
+
+      expect(within(section()).getByText("Updated from").closest("p")).toHaveTextContent(
+        "Updated from 1.0.0→2.0.0"
+      );
+      expect(within(section()).getByText("Updated today")).toBeInTheDocument();
+
+      rerender(renderInstalled([{ ...history, fromVersion: version("2.0.0") }]));
+      expect(within(section()).getByText("Version unchanged")).toBeInTheDocument();
+      expect(within(section()).queryByText("→")).not.toBeInTheDocument();
+      expect(within(section()).getByText("2.0.0")).toBeInTheDocument();
+
+      for (const records of [
+        [],
+        [{ ...history, fromVersion: version("") }],
+        [{ ...history, fromVersion: version("latest") }],
+        [{ ...history, toVersion: version("") }],
+        [{ ...history, toVersion: version("3.0.0") }],
+        [{ ...history, kind: kind === "cask" ? ("formula" as const) : ("cask" as const) }]
+      ]) {
+        rerender(renderInstalled(records));
+        expect(within(section()).queryByText("Updated from")).not.toBeInTheDocument();
+        expect(within(section()).queryByText("→")).not.toBeInTheDocument();
+        expect(within(section()).getByText("2.0.0")).toBeInTheDocument();
+      }
+    }
+  );
+
+  it("does not replace an available Homebrew target with saved history", () => {
+    render(
+      <HomebrewUpdateCard
+        item={{ ...cask, pinned: true }}
+        showUpdateHistory
+        snapshot={snapshot({
+          homebrewRecentlyUpdated: [
+            {
+              id: cask.id,
+              itemID: cask.id,
+              token: cask.token,
+              kind: cask.kind,
+              displayName: cask.name,
+              fromVersion: version("0.9.0"),
+              toVersion: cask.installedVersion,
+              updatedAt: new Date().toISOString()
+            }
+          ]
+        })}
+      />
+    );
+    expect(screen.queryByText("Updated from")).not.toBeInTheDocument();
+    expect(screen.getByText("1.0.0")).toBeInTheDocument();
+    expect(screen.getByText("2.0.0")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
   });
 
   it("does not show a Homebrew-backed app twice when another installed variant shares its display name", () => {

@@ -28,6 +28,8 @@ type LookupClients = {
 
 type LookupInput = {
   apps: AppRecord[];
+  /** Includes retained records as ambiguity constraints, never lookup targets. */
+  homebrewOwnershipApps?: AppRecord[];
   previousUpdates: Map<string, UpdateRecord>;
   homebrewItems: HomebrewManagedItem[];
   homebrewIndex: HomebrewCaskIndex;
@@ -44,7 +46,8 @@ type LookupInput = {
     app: AppRecord,
     token: string,
     items: HomebrewManagedItem[],
-    index: HomebrewCaskIndex
+    index: HomebrewCaskIndex,
+    apps?: AppRecord[]
   ) => boolean;
 };
 
@@ -85,7 +88,8 @@ export async function lookupAppUpdates(
             app,
             previous.homebrewToken,
             input.homebrewItems,
-            input.homebrewIndex
+            input.homebrewIndex,
+            input.homebrewOwnershipApps ?? input.apps
           )))
     ) {
       updates.set(app.id, previous);
@@ -125,7 +129,13 @@ export async function lookupAppUpdates(
       input.homebrewItems.some(
         (item) =>
           item.kind === "cask" &&
-          input.canUseHomebrewAppUpdate(app, item.token, input.homebrewItems, input.homebrewIndex)
+          input.canUseHomebrewAppUpdate(
+            app,
+            item.token,
+            input.homebrewItems,
+            input.homebrewIndex,
+            input.homebrewOwnershipApps ?? input.apps
+          )
       )
     );
   };
@@ -324,6 +334,8 @@ export async function lookupAppUpdates(
             updateURL: outcome.value.updateURL,
             updateURLKind: outcome.value.updateURLKind,
             releaseNotesURL: outcome.value.releaseNotesURL,
+            releaseNotesContent: outcome.value.releaseNotesContent,
+            releaseNotesFormat: outcome.value.releaseNotesFormat,
             releaseDate: outcome.value.releaseDate,
             checkedAt: outcome.checkedAt ?? input.now
           };
@@ -354,7 +366,14 @@ export async function lookupAppUpdates(
       path.basename(app.bundlePath),
       app.localVersion,
       input.homebrewIndex,
-      (token) => input.canUseHomebrewAppUpdate(app, token, input.homebrewItems, input.homebrewIndex)
+      (token) =>
+        input.canUseHomebrewAppUpdate(
+          app,
+          token,
+          input.homebrewItems,
+          input.homebrewIndex,
+          input.homebrewOwnershipApps ?? input.apps
+        )
     );
     if (
       homebrewUpdate &&
@@ -363,7 +382,8 @@ export async function lookupAppUpdates(
         app,
         homebrewUpdate.token,
         input.homebrewItems,
-        input.homebrewIndex
+        input.homebrewIndex,
+        input.homebrewOwnershipApps ?? input.apps
       )
     ) {
       if (input.homebrewVersionCheckSucceeded === false) {
@@ -392,7 +412,13 @@ export async function lookupAppUpdates(
     const owned = input.homebrewItems.some(
       (item) =>
         item.kind === "cask" &&
-        input.canUseHomebrewAppUpdate(app, item.token, input.homebrewItems, input.homebrewIndex)
+        input.canUseHomebrewAppUpdate(
+          app,
+          item.token,
+          input.homebrewItems,
+          input.homebrewIndex,
+          input.homebrewOwnershipApps ?? input.apps
+        )
     );
     finish(
       failed || (owned && input.homebrewVersionCheckSucceeded === false)

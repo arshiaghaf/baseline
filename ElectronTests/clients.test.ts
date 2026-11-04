@@ -940,7 +940,7 @@ describe("ported clients", () => {
         new Response(
           JSON.stringify({
             tag_name: "v0.2.0",
-            html_url: "https://github.com/arshiaghaf/Baseline/releases/tag/v0.2.0"
+            html_url: "https://github.com/arshiaghaf/baseline/releases/tag/v0.2.0"
           }),
           { status: 200 }
         )
@@ -953,7 +953,7 @@ describe("ported clients", () => {
           available,
           currentVersion: version(currentVersion),
           latestVersion: version("v0.2.0"),
-          releaseURL: "https://github.com/arshiaghaf/Baseline/releases/tag/v0.2.0",
+          releaseURL: "https://github.com/arshiaghaf/baseline/releases/tag/v0.2.0",
           checkedAt: "2026-05-31T12:00:00.000Z"
         });
       } finally {
@@ -964,6 +964,38 @@ describe("ported clients", () => {
 });
 
 describe("self-update read cancellation", () => {
+  it.each([
+    ["0.8.0", "0.9.0", true],
+    ["0.8.0", "0.10.0", true],
+    ["0.9.0", "0.10.0", true],
+    ["0.10.0", "0.9.0", false],
+    ["0.10.0", "0.10.0", false]
+  ] as const)(
+    "checks %s against %s without reusing HTTP cache",
+    async (current, latest, available) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            tag_name: `v${latest}`,
+            html_url: `https://github.com/arshiaghaf/baseline/releases/tag/v${latest}`
+          }),
+          { status: 200 }
+        )
+      );
+      try {
+        await expect(
+          new SelfUpdateClient("arm64").lookup(version(current), "2026-10-26")
+        ).resolves.toMatchObject({ available, latestVersion: version(`v${latest}`) });
+        expect(fetchMock).toHaveBeenCalledWith(
+          "https://api.github.com/repos/arshiaghaf/baseline/releases/latest",
+          expect.objectContaining({ cache: "no-store" })
+        );
+      } finally {
+        fetchMock.mockRestore();
+      }
+    }
+  );
+
   it("forwards refresh cancellation to an in-flight release request", async () => {
     const controller = new AbortController();
     let networkSignal!: AbortSignal;
@@ -1011,7 +1043,7 @@ describe("self-update architecture compatibility", () => {
         available: false,
         currentVersion: version("0.1.0"),
         checkedAt: "2026-10-21",
-        releaseURL: "https://github.com/arshiaghaf/Baseline#install"
+        releaseURL: "https://github.com/arshiaghaf/baseline#install"
       });
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {

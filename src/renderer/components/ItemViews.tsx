@@ -8,7 +8,8 @@ import type {
   AppRecord,
   BaselineSnapshot,
   HomebrewCaskDiscoveryItem,
-  HomebrewManagedItem
+  HomebrewManagedItem,
+  UpdateRecord
 } from "../../shared/domain";
 import { homebrewPresentationLabel } from "../../shared/domain";
 import { isCask } from "../../shared/homebrewAppLinking";
@@ -31,6 +32,38 @@ import {
 import { UpdateActionButton, RowMoreActionButton, VersionChange } from "./CommonControls";
 import { matchingAppForHomebrewItem } from "../helpers/sections";
 import { appCheckLabel } from "../helpers/appChecks";
+import { ReleaseNotesPreview } from "./ReleaseNotesPreview";
+
+/** Cheap source candidacy only; exact remote coverage is resolved lazily on interaction. */
+function canRequestHomebrewNotes(item: HomebrewManagedItem, snapshot: BaselineSnapshot): boolean {
+  if (/^latest$|^HEAD(?:-|$)/iu.test(item.latestVersion?.raw ?? "")) return false;
+  const app =
+    item.kind === "cask" && item.appID
+      ? snapshot.apps.find((app) => app.id === item.appID)
+      : undefined;
+  if (app?.sparkleFeedURL && item.caskMetadata?.installedAppPaths?.includes(app.bundlePath))
+    return true;
+  return item.kind === "formula"
+    ? item.formulaIdentity?.tap === "homebrew/core"
+    : item.tap === "homebrew/cask";
+}
+
+function canRequestAppNotes(
+  update: UpdateRecord | undefined,
+  app: AppRecord,
+  snapshot: BaselineSnapshot
+): boolean {
+  if (!update) return false;
+  if (update.source === "appStore") return Boolean(update.releaseNotesSummary?.trim());
+  if (update.source === "sparkle")
+    return Boolean(
+      update.releaseNotesContent?.trim() || update.releaseNotesURL || app.sparkleFeedURL
+    );
+  const item = snapshot.homebrewItems.find(
+    (item) => item.kind === "cask" && item.appID === app.id && item.token === update.homebrewToken
+  );
+  return Boolean(item && canRequestHomebrewNotes(item, snapshot));
+}
 
 export function AppIconButton({ app }: { app: AppRecord }) {
   return (
@@ -96,35 +129,62 @@ export function AppUpdateCard({ app, snapshot }: { app: AppRecord; snapshot: Bas
         </div>
       </div>
       <div className="item-card-main row-main">
-        <div className="row-title">
-          <strong title={app.displayName}>{app.displayName}</strong>
-          {label && (
-            <span
-              className={app.macOSManagedPath ? "app-management-label" : undefined}
-              title={
-                app.macOSManagedPath
-                  ? "Updates are managed through Software Update in System Settings. Baseline does not check these updates."
-                  : undefined
-              }
-            >
-              {label}
-            </span>
+        <ReleaseNotesPreview
+          title={app.displayName}
+          canRequestNotes={canRequestAppNotes(update, app, snapshot)}
+          target={
+            update
+              ? {
+                  kind: "app",
+                  id: app.id,
+                  version: update.remoteVersion.raw,
+                  buildVersion: update.remoteBuildVersion?.raw
+                }
+              : undefined
+          }
+          sourceKey={
+            update
+              ? `${update.source}:${update.checkedAt}:${update.releaseNotesURL ?? ""}:${app.sparkleFeedURL ?? ""}`
+              : ""
+          }
+        >
+          {(notesTrigger) => (
+            <>
+              <div className="row-title">
+                <strong title={app.displayName}>{app.displayName}</strong>
+                {label && (
+                  <span
+                    className={app.macOSManagedPath ? "app-management-label" : undefined}
+                    title={
+                      app.macOSManagedPath
+                        ? "Updates are managed through Software Update in System Settings. Baseline does not check these updates."
+                        : undefined
+                    }
+                  >
+                    {label}
+                  </span>
+                )}
+                {isHomebrewUpdatePinned && (
+                  <span title="Pinned in Homebrew; unpin in Homebrew to update.">
+                    Pinned in Homebrew
+                  </span>
+                )}
+              </div>
+              <p className="release-notes-version-line">
+                {update ? (
+                  <VersionChange
+                    from={appUpdateVersionChange(update).from}
+                    to={appUpdateVersionChange(update).to}
+                    collapseLong
+                  />
+                ) : (
+                  app.localVersion.raw || "unknown"
+                )}
+                {notesTrigger}
+              </p>
+            </>
           )}
-          {isHomebrewUpdatePinned && (
-            <span title="Pinned in Homebrew; unpin in Homebrew to update.">Pinned in Homebrew</span>
-          )}
-        </div>
-        <p>
-          {update ? (
-            <VersionChange
-              from={appUpdateVersionChange(update).from}
-              to={appUpdateVersionChange(update).to}
-              collapseLong
-            />
-          ) : (
-            app.localVersion.raw || "unknown"
-          )}
-        </p>
+        </ReleaseNotesPreview>
         <AppProviderStatus snapshot={snapshot} app={app} />
         <AdminPasswordStatus snapshot={snapshot} app={app} />
       </div>
@@ -317,36 +377,63 @@ export function AppRow({
     <article className={isIgnored ? "row ignored-row" : "row"}>
       <AppIconButton app={app} />
       <div className="row-main">
-        <div className="row-title">
-          <strong title={app.displayName}>{app.displayName}</strong>
-          {label && (
-            <span
-              className={app.macOSManagedPath ? "app-management-label" : undefined}
-              title={
-                app.macOSManagedPath
-                  ? "Updates are managed through Software Update in System Settings. Baseline does not check these updates."
-                  : undefined
-              }
-            >
-              {label}
-            </span>
+        <ReleaseNotesPreview
+          title={app.displayName}
+          canRequestNotes={canRequestAppNotes(update, app, snapshot)}
+          target={
+            update
+              ? {
+                  kind: "app",
+                  id: app.id,
+                  version: update.remoteVersion.raw,
+                  buildVersion: update.remoteBuildVersion?.raw
+                }
+              : undefined
+          }
+          sourceKey={
+            update
+              ? `${update.source}:${update.checkedAt}:${update.releaseNotesURL ?? ""}:${app.sparkleFeedURL ?? ""}`
+              : ""
+          }
+        >
+          {(notesTrigger) => (
+            <>
+              <div className="row-title">
+                <strong title={app.displayName}>{app.displayName}</strong>
+                {label && (
+                  <span
+                    className={app.macOSManagedPath ? "app-management-label" : undefined}
+                    title={
+                      app.macOSManagedPath
+                        ? "Updates are managed through Software Update in System Settings. Baseline does not check these updates."
+                        : undefined
+                    }
+                  >
+                    {label}
+                  </span>
+                )}
+                {isHomebrewUpdatePinned && (
+                  <span title="Pinned in Homebrew; unpin in Homebrew to update.">
+                    Pinned in Homebrew
+                  </span>
+                )}
+              </div>
+              <p className="release-notes-version-line">
+                {update ? (
+                  <VersionChange
+                    from={appUpdateVersionChange(update).from}
+                    to={appUpdateVersionChange(update).to}
+                  />
+                ) : recentlyUpdatedAt ? (
+                  updatedRelativeLabel(recentlyUpdatedAt)
+                ) : (
+                  app.localVersion.raw || "unknown"
+                )}
+                {notesTrigger}
+              </p>
+            </>
           )}
-          {isHomebrewUpdatePinned && (
-            <span title="Pinned in Homebrew; unpin in Homebrew to update.">Pinned in Homebrew</span>
-          )}
-        </div>
-        <p>
-          {update ? (
-            <VersionChange
-              from={appUpdateVersionChange(update).from}
-              to={appUpdateVersionChange(update).to}
-            />
-          ) : recentlyUpdatedAt ? (
-            updatedRelativeLabel(recentlyUpdatedAt)
-          ) : (
-            app.localVersion.raw || "unknown"
-          )}
-        </p>
+        </ReleaseNotesPreview>
         <AppProviderStatus snapshot={snapshot} app={app} />
         <AdminPasswordStatus snapshot={snapshot} app={app} />
       </div>
@@ -451,14 +538,29 @@ export function DiscoverRow({
 
 export function HomebrewUpdateCard({
   item,
-  snapshot
+  snapshot,
+  showUpdateHistory = false
 }: {
   item: HomebrewManagedItem;
   snapshot: BaselineSnapshot;
+  showUpdateHistory?: boolean;
 }) {
   const requestActionConfirmation = React.useContext(ActionConfirmationContext);
   const { isUpdating, isUninstalling, isIgnored, updateState, homebrewUninstallBlocked } =
     homebrewControlState(item, snapshot);
+  const history =
+    showUpdateHistory && !item.isOutdated
+      ? snapshot.homebrewRecentlyUpdated.find(
+          (record) =>
+            record.itemID === item.id &&
+            record.kind === item.kind &&
+            [record.fromVersion, record.toVersion].every(
+              ({ raw }) => raw.trim().length > 0 && raw.trim().toLowerCase() !== "latest"
+            ) &&
+            record.toVersion.raw === item.installedVersion.raw
+        )
+      : undefined;
+  const versionChanged = history && history.fromVersion.raw !== history.toVersion.raw;
 
   return (
     <article className={isIgnored ? "item-card update-card ignored-row" : "item-card update-card"}>
@@ -485,24 +587,65 @@ export function HomebrewUpdateCard({
         </div>
       </div>
       <div className="item-card-main row-main">
-        <div className="row-title">
-          <strong title={item.name}>{item.name}</strong>
-          {item.pinned && (
-            <span title="Pinned in Homebrew; unpin in Homebrew to update.">Pinned in Homebrew</span>
+        <ReleaseNotesPreview
+          title={item.name}
+          canRequestNotes={canRequestHomebrewNotes(item, snapshot)}
+          target={
+            item.isOutdated && item.latestVersion
+              ? { kind: "homebrew", id: item.id, version: item.latestVersion.raw }
+              : undefined
+          }
+          sourceKey={homebrewNotesSourceKey(item, snapshot)}
+        >
+          {(notesTrigger) => (
+            <>
+              <div className="row-title">
+                <strong title={item.name}>{item.name}</strong>
+                {item.pinned && (
+                  <span title="Pinned in Homebrew; unpin in Homebrew to update.">
+                    Pinned in Homebrew
+                  </span>
+                )}
+                <span>{homebrewPresentationLabel(item.kind, item.presentation)}</span>
+              </div>
+              <p
+                className={`release-notes-version-line${versionChanged ? " installed-version-history" : ""}`}
+                title={
+                  versionChanged
+                    ? `Updated from ${history.fromVersion.raw} → ${history.toVersion.raw}`
+                    : undefined
+                }
+              >
+                {versionChanged ? (
+                  <>
+                    Updated from{" "}
+                    <VersionChange from={history.fromVersion.raw} to={history.toVersion.raw} />
+                  </>
+                ) : item.isOutdated && item.latestVersion ? (
+                  <VersionChange
+                    from={item.installedVersion.raw || "unknown"}
+                    to={item.latestVersion.raw}
+                    collapseLong
+                  />
+                ) : (
+                  item.installedVersion.raw || "unknown"
+                )}
+                {notesTrigger}
+              </p>
+            </>
           )}
-          <span>{homebrewPresentationLabel(item.kind, item.presentation)}</span>
-        </div>
-        <p>
-          {item.latestVersion ? (
-            <VersionChange
-              from={item.installedVersion.raw || "unknown"}
-              to={item.latestVersion.raw}
-              collapseLong
-            />
-          ) : (
-            item.installedVersion.raw || "unknown"
-          )}
-        </p>
+        </ReleaseNotesPreview>
+        {history && (
+          <p>
+            {!versionChanged && (
+              <>
+                <span>Version unchanged</span>
+                {" · "}
+              </>
+            )}
+            {updatedRelativeLabel(history.updatedAt)}
+          </p>
+        )}
         <AdminPasswordStatus snapshot={snapshot} itemID={item.id} />
       </div>
     </article>
@@ -650,25 +793,43 @@ export function HomebrewRow({
     <article className={isIgnored ? "row ignored-row" : "row"}>
       <HomebrewItemIcon item={item} snapshot={snapshot} />
       <div className="row-main">
-        <div className="row-title">
-          <strong title={item.name}>{item.name}</strong>
-          {item.pinned && (
-            <span title="Pinned in Homebrew; unpin in Homebrew to update.">Pinned in Homebrew</span>
+        <ReleaseNotesPreview
+          title={item.name}
+          canRequestNotes={canRequestHomebrewNotes(item, snapshot)}
+          target={
+            item.isOutdated && item.latestVersion
+              ? { kind: "homebrew", id: item.id, version: item.latestVersion.raw }
+              : undefined
+          }
+          sourceKey={homebrewNotesSourceKey(item, snapshot)}
+        >
+          {(notesTrigger) => (
+            <>
+              <div className="row-title">
+                <strong title={item.name}>{item.name}</strong>
+                {item.pinned && (
+                  <span title="Pinned in Homebrew; unpin in Homebrew to update.">
+                    Pinned in Homebrew
+                  </span>
+                )}
+                <span>{homebrewPresentationLabel(item.kind, item.presentation)}</span>
+              </div>
+              <p className="release-notes-version-line">
+                {recentlyUpdatedAt ? (
+                  updatedRelativeLabel(recentlyUpdatedAt)
+                ) : item.latestVersion ? (
+                  <VersionChange
+                    from={item.installedVersion.raw || "unknown"}
+                    to={item.latestVersion.raw}
+                  />
+                ) : (
+                  item.installedVersion.raw || "unknown"
+                )}
+                {notesTrigger}
+              </p>
+            </>
           )}
-          <span>{homebrewPresentationLabel(item.kind, item.presentation)}</span>
-        </div>
-        <p>
-          {recentlyUpdatedAt ? (
-            updatedRelativeLabel(recentlyUpdatedAt)
-          ) : item.latestVersion ? (
-            <VersionChange
-              from={item.installedVersion.raw || "unknown"}
-              to={item.latestVersion.raw}
-            />
-          ) : (
-            item.installedVersion.raw || "unknown"
-          )}
-        </p>
+        </ReleaseNotesPreview>
         <AdminPasswordStatus snapshot={snapshot} itemID={item.id} />
       </div>
       <div className="row-actions">
@@ -692,6 +853,18 @@ export function HomebrewRow({
       </div>
     </article>
   );
+}
+
+function homebrewNotesSourceKey(item: HomebrewManagedItem, snapshot: BaselineSnapshot): string {
+  const linkedApp = matchingAppForHomebrewItem(item, snapshot);
+  return JSON.stringify([
+    item.kind,
+    item.fullToken ?? item.token,
+    item.tap,
+    item.formulaIdentity?.fullName,
+    linkedApp?.bundleIdentifier,
+    linkedApp?.sparkleFeedURL
+  ]);
 }
 
 export function HomebrewItemIcon({

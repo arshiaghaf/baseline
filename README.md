@@ -1,6 +1,10 @@
-# Baseline
+<p align="center">
+  <img src="docs/images/baseline-icon.png" width="96" alt="Baseline icon">
+</p>
 
-[![Release](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Farshiaghaf%2FBaseline%2Freleases%2Flatest&query=%24.tag_name&label=release&color=0a0a0c&style=flat-square)](https://github.com/arshiaghaf/baseline/releases/latest)
+<h1 align="center">Baseline</h1>
+
+[![Release](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2Farshiaghaf%2Fbaseline%2Freleases%2Flatest&query=%24.tag_name&label=release&color=0a0a0c&style=flat-square)](https://github.com/arshiaghaf/baseline/releases/latest)
 &nbsp;
 [![Minimum macOS version: 15+](https://img.shields.io/badge/macOS-15.0%2B-0a0a0c?style=flat-square)](https://github.com/arshiaghaf/baseline/releases/latest)
 &nbsp;
@@ -18,7 +22,53 @@ Requires Apple Silicon.
 brew install --cask arshiaghaf/tap/baseline
 ```
 
-### First launch on macOS 15 and later
+### GitHub Releases (DMG)
+
+Download the DMG from [GitHub Releases](https://github.com/arshiaghaf/baseline/releases), open it, and drag Baseline into Applications. Then follow the [first-launch steps](#first-launch-on-macos-15-and-later).
+
+## Baseline
+
+Baseline is a macOS app for managing and updating installed Mac apps and Homebrew packages from one place.
+
+It supports App Store apps, direct downloads, Sparkle-enabled apps, and Homebrew casks and formulae.
+
+You can check for app updates, run Homebrew upgrades, search and install Homebrew packages, ignore specific items so they no longer appear as available updates, and open update pages for apps that require manual action.
+
+![Baseline full app window showing app and Homebrew updates](docs/images/baseline-main-window.png)
+
+## What Baseline Does
+
+Baseline scans installed apps from system, user, and custom app directories, then checks public update sources for newer versions. It shows available updates, recently updated items, ignored items, and Homebrew discovery results without requiring a backend service or private APIs.
+
+When the required local tooling is available, Baseline can run update and install actions through Homebrew or `mas`. When that tooling is unavailable, it provides external fallback links.
+
+## Command line
+
+The bundled `baseline` command supports update checks, installed-app and package
+listings, exact-target update plans, controlled Homebrew updates, and explicit
+app handoffs. It offers versioned JSON and operation IDs for scripts and agents,
+using the same backend as the app. See the [CLI guide](docs/CLI.md) for setup,
+commands, exit codes and retry behavior.
+
+## Features
+
+- Detects updates from App Store lookup, Sparkle and DevMate appcasts, and Homebrew metadata
+- Provides unified update views for Mac apps, Homebrew casks, and Homebrew formulae
+- Shows recently updated items so you can see what was updated and when
+- Lets you ignore specific apps or Homebrew items so they stay out of the main update list
+- Supports uninstalling Homebrew-managed casks and formulae from item actions
+- Supports Homebrew search from the main window and menu bar tray to discover installable casks and formulae
+- Lets you search installed apps and filter available updates
+- Lets you hide the Dock icon in Settings > Appearance while keeping menu-bar access, with right-click actions for Refresh, Open Baseline, Settings, Check for Updates (Baseline itself), and Quit
+- Provides external fallback links when local CLI tooling is unavailable
+
+![Baseline Ignored tab showing app and Homebrew item actions](docs/images/baseline-ignored-updates.png)
+
+![Baseline main window Homebrew search showing installable casks](docs/images/baseline-homebrew-search.png)
+
+![Baseline menu bar tray showing app and Homebrew updates](docs/images/baseline-menu-bar.png)
+
+## First launch on macOS 15 and later
 
 Baseline is ad-hoc signed, without Developer ID or notarization. macOS Gatekeeper may block the first launch after either a Homebrew or DMG install.
 
@@ -39,44 +89,6 @@ xattr -dr com.apple.quarantine /Applications/Baseline.app
 ```
 
 This removes quarantine from the app and its contents; it does not verify the app's safety. Try opening Baseline again afterward.
-
-### GitHub Releases (DMG)
-
-Download the DMG from [GitHub Releases](https://github.com/arshiaghaf/Baseline/releases), open it, and drag Baseline into Applications. Then follow the first-launch steps above.
-
-## Baseline
-
-Baseline is a macOS app for managing and updating installed Mac apps and Homebrew packages from one place.
-
-It supports App Store apps, direct downloads, Sparkle-enabled apps, and Homebrew casks and formulae.
-
-You can check for app updates, run Homebrew upgrades, search and install Homebrew packages, ignore specific items so they no longer appear as available updates, and open update pages for apps that require manual action.
-
-![Baseline full app window showing app and Homebrew updates](docs/images/baseline-main-window.png)
-
-## What Baseline Does
-
-Baseline scans installed apps from system, user, and custom app directories, then checks public update sources for newer versions. It shows available updates, recently updated items, ignored items, and Homebrew discovery results without requiring a backend service or private APIs.
-
-When the required local tooling is available, Baseline can run update and install actions through Homebrew or `mas`. When that tooling is unavailable, it provides external fallback links.
-
-## Features
-
-- Detects updates from App Store lookup, Sparkle and DevMate appcasts, and Homebrew metadata
-- Provides unified update views for Mac apps, Homebrew casks, and Homebrew formulae
-- Shows recently updated items so you can see what was updated and when
-- Lets you ignore specific apps or Homebrew items so they stay out of the main update list
-- Supports uninstalling Homebrew-managed casks from item actions
-- Supports Homebrew search from the main window and menu bar tray to discover installable casks and formulae
-- Lets you search installed apps and filter available updates
-- Lets you hide the Dock icon in Settings > Appearance while keeping menu-bar access, with right-click actions for Refresh, Open Baseline, Settings, Check for Updates (Baseline itself), and Quit
-- Provides external fallback links when local CLI tooling is unavailable
-
-![Baseline Ignored tab showing app and Homebrew item actions](docs/images/baseline-ignored-updates.png)
-
-![Baseline main window Homebrew search showing installable casks](docs/images/baseline-homebrew-search.png)
-
-![Baseline menu bar tray showing app and Homebrew updates](docs/images/baseline-menu-bar.png)
 
 ## Limitations
 

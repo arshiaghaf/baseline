@@ -11,6 +11,8 @@ import dmgLayout from "./assets/dmg/layout.json";
 import { buildNumberForAppVersion, validBuildNumber } from "./src/shared/buildNumber";
 import { localAdHocSigningOptions, verifyPackagedMacSignatures } from "./macSigning.config";
 import { packageAdminAskpass } from "./adminAskpass.config";
+import { packageSelfUpdater, selfUpdateInfo } from "./selfUpdatePackaging.config";
+import { packageCLI } from "./cliPackaging.config";
 
 function macOSMajorVersion(): number | undefined {
   if (process.platform !== "darwin") {
@@ -45,7 +47,8 @@ const config: ForgeConfig = {
     asar: true,
     osxSign: localAdHocSigningOptions(),
     extendInfo: {
-      LSMinimumSystemVersion: "15.0"
+      LSMinimumSystemVersion: "15.0",
+      ...selfUpdateInfo()
     }
   },
   hooks: {
@@ -54,7 +57,11 @@ const config: ForgeConfig = {
         throw new Error("Baseline packages require macOS on Apple Silicon (darwin/arm64).");
       }
     },
-    packageAfterCopy: packageAdminAskpass,
+    packageAfterCopy: async (...args) => {
+      await packageAdminAskpass(...args);
+      await packageSelfUpdater(args[1]);
+      await packageCLI(args[1]);
+    },
     postPackage: verifyPackagedMacSignatures
   },
   rebuildConfig: {},

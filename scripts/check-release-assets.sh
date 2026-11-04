@@ -9,7 +9,7 @@ if [[ $# -gt 1 ]]; then
 fi
 
 TAG="${1:-$(git describe --tags --abbrev=0)}"
-REPOSITORY="arshiaghaf/Baseline"
+REPOSITORY="arshiaghaf/baseline"
 
 if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]?)[.](0|[1-9][0-9]?)$ ]]; then
   echo "Tag must look like v0.1.0 with minor and patch below 100"
@@ -48,8 +48,8 @@ for asset in "$DMG_ASSET" "$CHECKSUM_ASSET"; do
   fi
 done
 
-if ! printf "%s" "$body" | grep -Eq '^### (Highlights|Added|Fixed)$'; then
-  echo "Release notes must contain a Highlights, Added, or Fixed section."
+if ! printf "%s" "$body" | grep -Eq '^### (Added|Fixed)$'; then
+  echo "Release notes must contain an Added and/or Fixed section."
   exit 1
 fi
 
