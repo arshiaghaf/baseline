@@ -1533,14 +1533,18 @@ test("a fresh profile resumes an interrupted welcome and durably remembers compl
   const firstPage = await first.firstWindow();
   await expect(firstPage.getByRole("button", { name: "Skip welcome" })).toBeVisible();
   await firstPage.getByRole("button", { name: "Continue" }).click();
-  await expect(firstPage.getByRole("heading", { level: 1 })).toContainText("Your apps.");
+  await expect(firstPage.getByRole("heading", { level: 1 })).toContainText(
+    "Your updates, together"
+  );
   expect(first.windows()).toHaveLength(1);
   await closeApp(first);
   expect(JSON.parse(await readFile(snapshotPath, "utf8")).welcomeDismissed).toBe(false);
 
   const interrupted = await launchBaseline({ userData, firstUse: true });
   const interruptedPage = await interrupted.firstWindow();
-  await expect(interruptedPage.getByRole("heading", { level: 1 })).toContainText("A little order.");
+  await expect(interruptedPage.getByRole("heading", { level: 1 })).toContainText(
+    "Welcome to Baseline"
+  );
   await interruptedPage.getByRole("button", { name: "Continue" }).click();
   await interruptedPage.getByRole("button", { name: "Continue" }).click();
   await interruptedPage.getByRole("button", { name: "Open Baseline" }).click();

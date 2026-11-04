@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowUpRight, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, Pause, Play, X } from "lucide-react";
 import defaultMark from "../../../assets/app-icon.icon/Assets/ChatGPT Image Oct 21, 2026, 10_19_50 PM.png";
 import mark from "../../../assets/app-icon.icon/Assets/ChatGPT Image Oct 21, 2026, 10_19_53 PM.png";
 import { baseline } from "../ipc";
@@ -12,6 +12,7 @@ const chapters = ["Welcome", "Your updates", "Make yourself at home"];
 /** The welcome is a replaceable surface, not a modal over a live dashboard. */
 export function Welcome({ onClose, revisit = false }: { onClose: () => void; revisit?: boolean }) {
   const [step, setStep] = useState(0);
+  const [motionPaused, setMotionPaused] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [guideError, setGuideError] = useState("");
@@ -41,6 +42,7 @@ export function Welcome({ onClose, revisit = false }: { onClose: () => void; rev
   return (
     <main
       className="welcome"
+      data-motion-paused={motionPaused}
       aria-labelledby="welcome-title"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -50,7 +52,18 @@ export function Welcome({ onClose, revisit = false }: { onClose: () => void; rev
       }}
     >
       <header className="welcome-topbar">
-        <span>Baseline</span>
+        <button
+          className="welcome-motion-toggle"
+          aria-label={motionPaused ? "Resume motion" : "Pause motion"}
+          title={motionPaused ? "Resume motion" : "Pause motion"}
+          onClick={() => setMotionPaused(!motionPaused)}
+        >
+          {motionPaused ? (
+            <Play size={15} aria-hidden="true" />
+          ) : (
+            <Pause size={15} aria-hidden="true" />
+          )}
+        </button>
         <button
           className="welcome-close"
           aria-label={revisit ? "Close welcome" : "Skip welcome"}
@@ -62,86 +75,47 @@ export function Welcome({ onClose, revisit = false }: { onClose: () => void; rev
       </header>
       <div className={`welcome-composition welcome-step-${step}`}>
         <div className="welcome-art" aria-hidden="true">
-          <div className="welcome-halo" />
-          <picture className="welcome-mark">
-            <source media="(prefers-color-scheme: dark)" srcSet={mark} />
-            <img src={defaultMark} alt="" draggable={false} />
-          </picture>
-          <div className="welcome-baseline" />
+          <div className="welcome-orbit">
+            <picture className="welcome-mark">
+              <source media="(prefers-color-scheme: dark)" srcSet={mark} />
+              <img src={defaultMark} width={1280} height={1280} alt="" draggable={false} />
+            </picture>
+          </div>
+          <div className="welcome-shadow" />
         </div>
         <section className="welcome-copy" key={step}>
-          <p className="welcome-eyebrow">{chapters[step]}</p>
           <h1 id="welcome-title" ref={heading} tabIndex={-1}>
-            {step === 0 ? (
-              <>
-                A little order.
-                <br />A lighter Mac day.
-              </>
-            ) : step === 1 ? (
-              <>
-                Your apps.
-                <br />A clearer picture.
-              </>
-            ) : (
-              <>
-                Right here.
-                <br />
-                When you need it.
-              </>
-            )}
+            {step === 0
+              ? "Welcome to Baseline"
+              : step === 1
+                ? "Your updates, together"
+                : "Make yourself at home"}
           </h1>
-          {step === 0 && (
-            <p className="welcome-description">
-              Welcome to Baseline. A considered place to find app updates and choose what happens
-              next.
-            </p>
-          )}
           {step === 1 && (
-            <>
-              <p className="welcome-description">
-                Find updates from the App Store, publishers, and apps you installed with Homebrew.
-              </p>
-              <div className="welcome-details">
-                <p>
-                  <strong>You choose the next step.</strong> Update with a supported tool, visit the
-                  publisher, or open the app to use its own updater.
-                </p>
-                <p>
-                  <strong>A check isn’t an install.</strong> Background checks find updates. You
-                  decide when to act.
-                </p>
-              </div>
-            </>
+            <p className="welcome-description">
+              Find updates from the App Store, publishers, and Homebrew. Checks don’t install
+              updates. You choose what happens next.
+            </p>
           )}
           {step === 2 && (
             <>
               <p className="welcome-description">
-                Keep the full picture in the window, or check in from your menu bar. Make it yours
-                in Settings.
+                Use the window or menu bar. Your preferences and history stay on this Mac; update
+                checks contact public sources. No Baseline account needed.
               </p>
-              <div className="welcome-details">
-                <p>
-                  <strong>No Baseline account needed.</strong> Preferences and history stay on this
-                  Mac. Update checks contact public update sources.
-                </p>
-                <p>
-                  Some updates need macOS App Management access. The optional guide explains how;
-                  you can come back to it in Settings.
-                </p>
-                <button
-                  className="welcome-guide"
-                  onClick={() => {
-                    setGuideError("");
-                    void baseline
-                      .permissionGuide("show")
-                      .catch(() =>
-                        setGuideError("The permission guide couldn’t open. Please try again.")
-                      );
-                  }}
-                >
-                  Help with permissions <ArrowUpRight size={13} aria-hidden="true" />
-                </button>
-              </div>
+              <button
+                className="welcome-guide"
+                onClick={() => {
+                  setGuideError("");
+                  void baseline
+                    .permissionGuide("show")
+                    .catch(() =>
+                      setGuideError("The permission guide couldn’t open. Please try again.")
+                    );
+                }}
+              >
+                Help with permissions <ArrowUpRight size={13} aria-hidden="true" />
+              </button>
             </>
           )}
         </section>

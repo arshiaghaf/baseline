@@ -19,10 +19,10 @@ it("moves focus with chapters, goes back, and opens permissions only on request"
   expect(screen.getByRole("img", { name: "Introduction: step 1 of 3 — Welcome" })).toBeVisible();
   expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your apps.");
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your updates, together");
   expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("A little order.");
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Welcome to Baseline");
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
   expect(window.baseline.permissionGuide).not.toHaveBeenCalled();
@@ -68,5 +68,15 @@ it("replays without rewriting preferences and recovers permission-guide failures
   await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: "Back to Settings" }));
   expect(close).toHaveBeenCalledOnce();
+  expect(window.baseline.updatePreferences).not.toHaveBeenCalled();
+});
+
+it("retains the motion pause across chapters and resumes on request", () => {
+  render(<Welcome onClose={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Pause motion" }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  expect(screen.getByRole("main")).toHaveAttribute("data-motion-paused", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Resume motion" }));
+  expect(screen.getByRole("main")).toHaveAttribute("data-motion-paused", "false");
   expect(window.baseline.updatePreferences).not.toHaveBeenCalled();
 });

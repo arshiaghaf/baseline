@@ -5014,9 +5014,7 @@ describe("permission introduction", () => {
     view.unmount();
     vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot({ welcomeDismissed: false }));
     const resumed = render(<App />);
-    await screen.findByText(
-      "Welcome to Baseline. A considered place to find app updates and choose what happens next."
-    );
+    await screen.findByText("Welcome to Baseline");
     fireEvent.click(screen.getByRole("button", { name: "Skip welcome" }));
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument()

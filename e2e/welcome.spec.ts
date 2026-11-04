@@ -36,6 +36,10 @@ test("welcome chapters, reduced motion, keyboard, interruption and replay", asyn
   delete env.ELECTRON_RUN_AS_NODE;
   const application = await electron.launch({
     args: [entry, "-AppleShowScrollBars", "Always"],
+    recordVideo:
+      process.env.BASELINE_WELCOME_RECORD_MOTION === "1"
+        ? { dir: testInfo.outputPath("video"), size: { width: 1042, height: 759 } }
+        : undefined,
     env: Object.fromEntries(
       Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string")
     )
@@ -72,28 +76,40 @@ test("welcome chapters, reduced motion, keyboard, interruption and replay", asyn
     await expect(
       page.getByRole("img", { name: "Introduction: step 1 of 3 — Welcome" })
     ).toBeVisible();
-    // Default motion finishes rather than looping forever.
-    await expect
-      .poll(() =>
-        page
-          .locator(".welcome-mark")
-          .evaluate((node) =>
-            node.getAnimations().every((animation) => animation.playState === "finished")
-          )
-      )
-      .toBe(true);
+    await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: "dark" });
+    const orbit = page.locator(".welcome-orbit");
+    const transform = () => orbit.evaluate((node) => getComputedStyle(node).transform);
+    const initialTransform = await transform();
+    await expect.poll(transform).not.toBe(initialTransform);
+    await page.getByRole("button", { name: "Pause motion" }).click();
+    await expect(page.locator(".welcome-shadow")).toHaveCSS("animation-play-state", "paused");
+    const pausedTransform = await transform();
+    await orbit.evaluate(async () => {
+      for (let frame = 0; frame < 8; frame++) {
+        await new Promise(requestAnimationFrame);
+      }
+    });
+    expect(await transform()).toBe(pausedTransform);
+    await page.getByRole("button", { name: "Resume motion" }).click();
+    await expect.poll(transform).not.toBe(pausedTransform);
+    if (process.env.BASELINE_WELCOME_RECORD_MOTION === "1") {
+      // Capture a complete orbit for human review, not a timing assertion.
+      await page.waitForTimeout(12000);
+    }
     for (const colorScheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
       await capture(`welcome-${colorScheme}.png`);
     }
+    await expect(page.getByRole("button", { name: "Pause motion" })).toBeHidden();
+    await page.getByRole("heading", { level: 1 }).focus();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("button", { name: "Continue" })).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("Your apps.");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Your updates, together");
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
     await capture("updates-dark.png");
     await page.reload();
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("A little order.");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Welcome to Baseline");
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByRole("button", { name: "Continue" }).click();
     await capture("ready-dark.png");
@@ -111,7 +127,7 @@ test("welcome chapters, reduced motion, keyboard, interruption and replay", asyn
       await page.locator(".welcome").evaluate((node) => node.scrollWidth <= node.clientWidth)
     ).toBe(true);
     expect(
-      await page.locator(".welcome-mark").evaluate((node) => getComputedStyle(node).animationName)
+      await page.locator(".welcome-orbit").evaluate((node) => getComputedStyle(node).animationName)
     ).toBe("none");
     await page.getByRole("button", { name: "Open Baseline" }).click();
     await expect(page.locator(".welcome")).toHaveCount(0);
