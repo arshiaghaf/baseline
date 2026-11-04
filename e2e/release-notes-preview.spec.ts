@@ -263,8 +263,9 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     try {
       await expect.poll(() => notesContent.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
     } catch (error) {
-      await test.info().attach("notes-keyboard-scroll", {
-        body: JSON.stringify({
+      try {
+        const diagnosticPath = test.info().outputPath("notes-keyboard-scroll.json");
+        const body = JSON.stringify({
           before: beforePageDown,
           after: await scrollState(),
           events: await page.evaluate(
@@ -272,9 +273,16 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
               (globalThis as typeof globalThis & { notesKeyboardEvents?: object[] })
                 .notesKeyboardEvents
           )
-        }),
-        contentType: "application/json"
-      });
+        });
+        // The list reporter does not persist in-memory attachments for CI uploads.
+        await writeFile(diagnosticPath, body);
+        await test.info().attach("notes-keyboard-scroll", {
+          path: diagnosticPath,
+          contentType: "application/json"
+        });
+      } catch (diagnosticError) {
+        console.warn("Could not retain notes keyboard diagnostics:", diagnosticError);
+      }
       throw error;
     }
     await page.keyboard.press("Shift+Tab");
