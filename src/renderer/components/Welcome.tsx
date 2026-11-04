@@ -149,6 +149,7 @@ export function Welcome({ onClose, revisit = false }: { onClose: () => void; rev
       <footer className="welcome-footer">
         <div
           className="welcome-progress"
+          role="img"
           aria-label={`Introduction: step ${step + 1} of 3 — ${chapters[step]}`}
         >
           {chapters.map((chapter, index) => (

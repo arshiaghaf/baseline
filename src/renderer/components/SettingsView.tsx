@@ -67,7 +67,7 @@ export function SettingsView({ snapshot }: { snapshot: BaselineSnapshot }) {
       observer?.disconnect();
       window.removeEventListener("resize", alignTopbar);
     };
-  }, []);
+  }, [showWelcome]);
 
   useEffect(() => {
     void baseline.getAppMetadata().then(setAppMetadata);

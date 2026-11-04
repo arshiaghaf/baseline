@@ -16,6 +16,7 @@ beforeEach(() => {
 it("moves focus with chapters, goes back, and opens permissions only on request", async () => {
   const close = vi.fn();
   render(<Welcome onClose={close} />);
+  expect(screen.getByRole("img", { name: "Introduction: step 1 of 3 — Welcome" })).toBeVisible();
   expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your apps.");

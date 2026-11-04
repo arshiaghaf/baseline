@@ -1525,6 +1525,43 @@ test("keeps failure support collapsed and previews exact bounded report text wit
   await closeApp(application);
 });
 
+test("a fresh profile resumes an interrupted welcome and durably remembers completion", async () => {
+  const userData = await mkdtemp(path.join(os.tmpdir(), "baseline-e2e-"));
+  const snapshotPath = path.join(userData, "baseline-snapshot.json");
+  // No seeded snapshot: exercise production first-run initialization and saving.
+  const first = await launchBaseline({ userData, firstUse: true });
+  const firstPage = await first.firstWindow();
+  await expect(firstPage.getByRole("button", { name: "Skip welcome" })).toBeVisible();
+  await firstPage.getByRole("button", { name: "Continue" }).click();
+  await expect(firstPage.getByRole("heading", { level: 1 })).toContainText("Your apps.");
+  expect(first.windows()).toHaveLength(1);
+  await closeApp(first);
+  expect(JSON.parse(await readFile(snapshotPath, "utf8")).welcomeDismissed).toBe(false);
+
+  const interrupted = await launchBaseline({ userData, firstUse: true });
+  const interruptedPage = await interrupted.firstWindow();
+  await expect(interruptedPage.getByRole("heading", { level: 1 })).toContainText("A little order.");
+  await interruptedPage.getByRole("button", { name: "Continue" }).click();
+  await interruptedPage.getByRole("button", { name: "Continue" }).click();
+  await interruptedPage.getByRole("button", { name: "Open Baseline" }).click();
+  await expect(interruptedPage.locator(".welcome")).toHaveCount(0);
+  await closeApp(interrupted);
+  expect(JSON.parse(await readFile(snapshotPath, "utf8")).welcomeDismissed).toBe(true);
+
+  const completed = await launchBaseline({ userData, firstUse: true });
+  const completedPage = await completed.firstWindow();
+  await expect(completedPage.getByRole("heading", { level: 1 })).toHaveText("All");
+  await expect(completedPage.locator(".welcome")).toHaveCount(0);
+  expect(completed.windows()).toHaveLength(1);
+  await completedPage.evaluate(() => window.baseline.showSettings());
+  await completedPage.getByRole("button", { name: "Show welcome" }).click();
+  await expect(completedPage.getByRole("button", { name: "Close welcome" })).toBeVisible();
+  await completedPage.keyboard.press("Escape");
+  await expect(completedPage.getByRole("button", { name: "Show welcome" })).toBeFocused();
+  expect(JSON.parse(await readFile(snapshotPath, "utf8")).welcomeDismissed).toBe(true);
+  await closeApp(completed);
+});
+
 test("explains conditional app permissions without gating checks and remembers dismissal", async () => {
   const userData = await mkdtemp(path.join(os.tmpdir(), "baseline-e2e-"));
   await writeFile(

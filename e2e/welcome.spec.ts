@@ -35,7 +35,7 @@ test("welcome chapters, reduced motion, keyboard, interruption and replay", asyn
   };
   delete env.ELECTRON_RUN_AS_NODE;
   const application = await electron.launch({
-    args: [entry],
+    args: [entry, "-AppleShowScrollBars", "Always"],
     env: Object.fromEntries(
       Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string")
     )
@@ -44,12 +44,34 @@ test("welcome chapters, reduced motion, keyboard, interruption and replay", asyn
   console.log(`Owned hidden welcome PID ${child.pid}: ${child.spawnfile}`);
   try {
     const page = await application.firstWindow();
+    const capture = async (name: string) => {
+      const icon = page.locator(".welcome-mark img");
+      if (await icon.count()) {
+        await expect
+          .poll(() =>
+            icon.evaluate((node: HTMLImageElement) => {
+              const source = node.parentElement!.querySelector("source")!;
+              const expected = new URL(
+                matchMedia("(prefers-color-scheme: dark)").matches ? source.srcset : node.src,
+                document.baseURI
+              ).href;
+              return node.currentSrc === expected && node.complete && node.naturalWidth > 0;
+            })
+          )
+          .toBe(true);
+        await icon.evaluate((node: HTMLImageElement) => node.decode());
+      }
+      await page.screenshot({ path: testInfo.outputPath(name) });
+    };
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     const session = await page.context().newCDPSession(page);
     await session.send("Emulation.setFocusEmulationEnabled", { enabled: true });
     await expect(page.getByRole("button", { name: "Skip welcome" })).toBeVisible();
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
+    await expect(
+      page.getByRole("img", { name: "Introduction: step 1 of 3 — Welcome" })
+    ).toBeVisible();
     // Default motion finishes rather than looping forever.
     await expect
       .poll(() =>
@@ -62,25 +84,25 @@ test("welcome chapters, reduced motion, keyboard, interruption and replay", asyn
       .toBe(true);
     for (const colorScheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-      await page.screenshot({ path: testInfo.outputPath(`welcome-${colorScheme}.png`) });
+      await capture(`welcome-${colorScheme}.png`);
     }
     await page.keyboard.press("Tab");
     await expect(page.getByRole("button", { name: "Continue" })).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("heading", { level: 1 })).toContainText("Your apps.");
     await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
-    await page.screenshot({ path: testInfo.outputPath("updates-dark.png") });
+    await capture("updates-dark.png");
     await page.reload();
     await expect(page.getByRole("heading", { level: 1 })).toContainText("A little order.");
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByRole("button", { name: "Continue" }).click();
-    await page.screenshot({ path: testInfo.outputPath("ready-dark.png") });
+    await capture("ready-dark.png");
     await application.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0]!.setContentSize(660, 620)
     );
     for (const colorScheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-      await page.screenshot({ path: testInfo.outputPath(`ready-minimum-${colorScheme}.png`) });
+      await capture(`ready-minimum-${colorScheme}.png`);
     }
     const geometry = await page.locator(".welcome-next").boundingBox();
     const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
@@ -99,10 +121,26 @@ test("welcome chapters, reduced motion, keyboard, interruption and replay", asyn
     await page.evaluate(() => {
       window.location.hash = "/settings";
     });
+    await page.addStyleTag({
+      content:
+        ".settings-content { overflow-y: scroll; scrollbar-gutter: stable; } .settings-content::-webkit-scrollbar { width: 12px; }"
+    });
+    const gutter = () =>
+      page
+        .locator(".settings-content")
+        .evaluate((node: HTMLElement) => node.offsetWidth - node.clientWidth);
+    await expect.poll(gutter).toBeGreaterThan(0);
     await page.getByRole("button", { name: "Show welcome" }).click();
     await expect(page.getByRole("button", { name: "Close welcome" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("button", { name: "Show welcome" })).toBeFocused();
+    await expect
+      .poll(() =>
+        page
+          .locator(".settings-topbar")
+          .evaluate((node) => node.style.getPropertyValue("--settings-scrollbar-width"))
+      )
+      .toBe(`${await gutter()}px`);
     await page.screenshot({ path: testInfo.outputPath("settings-revisit.png") });
     await page.evaluate(() => {
       window.location.hash = "/menubar";
