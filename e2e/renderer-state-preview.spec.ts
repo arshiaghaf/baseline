@@ -97,6 +97,9 @@ for (const route of ["main", "menubar"]) {
           return messages.length;
         };
       });
+      // Another renderer's edit was admitted first, but its broadcast remains
+      // queued when this renderer submits its newer local draft.
+      await page.evaluate(() => window.baseline.setSearchText("A", "other-renderer:1"));
       const input = page.getByPlaceholder("Search");
       await input.pressSequentially("abc");
       await expect(input).toHaveValue("abc");
@@ -108,6 +111,11 @@ for (const route of ["main", "menubar"]) {
       );
       await expect(input).toHaveValue("abc");
       expect(await input.evaluate((node: HTMLInputElement) => node.selectionStart)).toBe(2);
+      await input.pressSequentially("d");
+      await expect(input).toHaveValue("abdc");
+      await expect
+        .poll(async () => (await page.evaluate(() => window.baseline.getSnapshot())).searchText)
+        .toBe("abdc");
       await application.evaluate(() => {
         const release = (globalThis as typeof globalThis & { releaseStateSnapshot: () => number })
           .releaseStateSnapshot;
@@ -115,7 +123,7 @@ for (const route of ["main", "menubar"]) {
           /* Drain this fixture's remaining echoes. */
         }
       });
-      await expect(input).toHaveValue("abc");
+      await expect(input).toHaveValue("abdc");
       await page.getByRole("button", { name: "Clear Search" }).click();
       await expect(input).toHaveValue("");
       await expect(input).toBeFocused();

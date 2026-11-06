@@ -67,6 +67,11 @@ export type PreferencePatch = Partial<{
   showDockIcon: boolean;
 }>;
 
+export type SearchEditAcknowledgement = {
+  requestID: string;
+  snapshotRevision: number;
+};
+
 export type BaselineAPI = {
   permissionGuide(action: PermissionGuideAction): Promise<PermissionGuideInfo>;
   getSnapshot(): Promise<BaselineSnapshot>;
@@ -83,7 +88,7 @@ export type BaselineAPI = {
   refreshToolStatus(): Promise<void>;
   cleanUpHomebrew(): Promise<string>;
   refresh(lightweight?: boolean, forceAppDiscovery?: boolean): Promise<void>;
-  setSearchText(searchText: string, requestID?: string): Promise<void>;
+  setSearchText(searchText: string, requestID?: string): Promise<SearchEditAcknowledgement | void>;
   toggleCollapsedSection(kind: "app" | "homebrew", sectionID: string): Promise<void>;
   setSelectedTab(tab: MenuTab): Promise<void>;
   updatePreferences(patch: PreferencePatch): Promise<void>;

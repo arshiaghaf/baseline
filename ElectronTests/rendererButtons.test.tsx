@@ -2578,7 +2578,11 @@ describe("renderer button parity", () => {
       expect(screen.getByRole("button", { name: "Updated" })).toBeInTheDocument();
       fireEvent.change(screen.getByPlaceholderText("Search"), { target: { value: "example-app" } });
       expect(window.baseline.setSearchText).toHaveBeenCalledWith("example-app", expect.any(String));
-      await publish({ searchText: "example-app", homebrewDiscoverItems: [second] });
+      await publish({
+        searchText: "example-app",
+        searchTextRequestID: vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1],
+        homebrewDiscoverItems: [second]
+      });
       await click(screen.getByRole("button", { name: "Install" }));
       await click(screen.getByRole("button", { name: "Install Example App" }));
       expect(window.baseline.installHomebrewItem).toHaveBeenNthCalledWith(2, second);
@@ -5363,6 +5367,14 @@ it("owns rejected search requests and allows Enter to retry the same draft", asy
   expect(window.baseline.setSearchText).toHaveBeenCalledTimes(2);
   rerender(
     <SearchField
+      snapshot={snapshot({
+        searchText: "query",
+        searchTextRequestID: vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1]
+      })}
+    />
+  );
+  rerender(
+    <SearchField
       snapshot={snapshot({ searchText: "external", searchTextRequestID: "another-window" })}
     />
   );
@@ -5399,3 +5411,105 @@ it("finishes a composing query before closing the palette and can edit after reo
   fireEvent.change(screen.getByPlaceholderText("Search"), { target: { value: "日本語" } });
   expect(window.baseline.setSearchText).toHaveBeenLastCalledWith("日本語", expect.any(String));
 });
+
+it.each([false, true])(
+  "preserves a newer local query while another renderer's older snapshot is delayed (compact=%s)",
+  (compact) => {
+    const view = (state: BaselineSnapshot) =>
+      compact ? (
+        <ToolbarSearch open snapshot={state} onToggle={() => {}} onClose={() => {}} />
+      ) : (
+        <SearchField snapshot={state} />
+      );
+    const { rerender } = render(view(snapshot({ snapshotRevision: 0 })));
+    const input = screen.getByPlaceholderText("Search") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "B" } });
+    const firstID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1];
+    rerender(
+      view(
+        snapshot({ searchText: "A", searchTextRequestID: "other-renderer:1", snapshotRevision: 1 })
+      )
+    );
+    expect(input).toHaveValue("B");
+    fireEvent.change(input, { target: { value: input.value + "C" } });
+    expect(window.baseline.setSearchText).toHaveBeenLastCalledWith("BC", expect.any(String));
+    const latestID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1];
+    rerender(
+      view(snapshot({ searchText: "B", searchTextRequestID: firstID, snapshotRevision: 2 }))
+    );
+    expect(input).toHaveValue("BC");
+    rerender(
+      view(snapshot({ searchText: "BC", searchTextRequestID: latestID, snapshotRevision: 3 }))
+    );
+    rerender(
+      view(
+        snapshot({ searchText: "D", searchTextRequestID: "other-renderer:2", snapshotRevision: 4 })
+      )
+    );
+    expect(input).toHaveValue("D");
+  }
+);
+
+it.each([true, false])(
+  "reconciles a coalesced later external edit using the invoke revision (responseFirst=%s)",
+  async (responseFirst) => {
+    let acknowledge!: (value: { requestID: string; snapshotRevision: number }) => void;
+    vi.mocked(window.baseline.setSearchText).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          acknowledge = resolve;
+        })
+    );
+    const { rerender } = render(<SearchField snapshot={snapshot({ snapshotRevision: 0 })} />);
+    const input = screen.getByPlaceholderText("Search");
+    fireEvent.change(input, { target: { value: "local" } });
+    const requestID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1]!;
+    if (responseFirst) await act(async () => acknowledge({ requestID, snapshotRevision: 2 }));
+    rerender(
+      <SearchField
+        snapshot={snapshot({
+          searchText: "older",
+          searchTextRequestID: "other:1",
+          snapshotRevision: 1
+        })}
+      />
+    );
+    expect(input).toHaveValue("local");
+    rerender(
+      <SearchField
+        snapshot={snapshot({
+          searchText: "newer",
+          searchTextRequestID: "other:2",
+          snapshotRevision: 3
+        })}
+      />
+    );
+    if (!responseFirst) {
+      expect(input).toHaveValue("local");
+      await act(async () => acknowledge({ requestID, snapshotRevision: 2 }));
+    }
+    expect(input).toHaveValue("newer");
+  }
+);
+
+it.each(["", "60"])(
+  "reconciles a dirty interval after external changes when committing %j",
+  (next) => {
+    const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+    const input = screen.getByRole("textbox", { name: "Interval minutes" });
+    fireEvent.change(input, { target: { value: "90" } });
+    rerender(<RefreshIntervalInput value={30} disabled={false} />);
+    expect(input).toHaveValue("90");
+    fireEvent.change(input, { target: { value: next } });
+    fireEvent.blur(input);
+    if (next) {
+      expect(input).toHaveValue("60");
+      expect(window.baseline.updatePreferences).toHaveBeenCalledExactlyOnceWith({
+        refreshIntervalMinutes: 60
+      });
+    } else {
+      expect(input).toHaveValue("30");
+      expect(window.baseline.updatePreferences).not.toHaveBeenCalled();
+    }
+  }
+);

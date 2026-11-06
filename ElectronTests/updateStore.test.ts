@@ -7593,7 +7593,11 @@ it("composes rapid section-toggle intents across windows before persistence comp
 
 it("publishes search edit acknowledgements and identifies external query changes", async () => {
   const store = await makeStore({});
-  await store.setSearchText("first", "renderer:1");
+  const acknowledgement = await store.setSearchText("first", "renderer:1");
+  expect(acknowledgement).toEqual({
+    requestID: "renderer:1",
+    snapshotRevision: store.getSnapshot().snapshotRevision
+  });
   expect(store.getSnapshot()).toMatchObject({
     searchText: "first",
     searchTextRequestID: "renderer:1"

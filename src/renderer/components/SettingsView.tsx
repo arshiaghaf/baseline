@@ -704,14 +704,17 @@ export function RefreshIntervalInput({ value, disabled }: { value: number; disab
   const commitDraft = () => {
     if (!dirtyRef.current) return;
     dirtyRef.current = false;
+    const intendedValue = pendingRef.current.at(-1)?.value ?? String(value);
     if (!draft) {
-      setDraft(committedRef.current ?? String(value));
+      setDraft(intendedValue);
+      committedRef.current = intendedValue;
+      setSaveError(false);
       return;
     }
     const refreshIntervalMinutes = clampRefreshIntervalMinutes(Number.parseInt(draft, 10));
     const normalizedDraft = String(refreshIntervalMinutes);
     setDraft(normalizedDraft);
-    if (committedRef.current === normalizedDraft) return;
+    if (committedRef.current !== undefined && intendedValue === normalizedDraft) return;
     committedRef.current = normalizedDraft;
     const id = ++submissionRef.current;
     pendingRef.current.push({ id, value: normalizedDraft });

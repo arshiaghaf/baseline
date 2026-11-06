@@ -148,7 +148,12 @@ async function start(): Promise<void> {
           snapshot.searchText = args[0] as string;
           snapshot.searchTextRequestID = args[1] as string | undefined;
           publish();
-          return;
+          return snapshot.searchTextRequestID
+            ? {
+                requestID: snapshot.searchTextRequestID,
+                snapshotRevision: snapshot.snapshotRevision!
+              }
+            : undefined;
         case "toggleCollapsedSection": {
           const key = args[0] === "app" ? "collapsedAppSectionIDs" : "collapsedHomebrewSectionIDs";
           const values = new Set(snapshot[key]);

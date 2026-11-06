@@ -25,7 +25,7 @@ import type {
 import { emptyHomebrewCaskIndex, normalizeAppearancePreference } from "../shared/domain";
 import type { HomebrewMaintenanceRunEvent } from "../shared/homebrewProgress";
 import { homebrewCommandToken, installedCaskEntry } from "../shared/homebrewIdentity";
-import type { PreferencePatch } from "../shared/ipc";
+import type { PreferencePatch, SearchEditAcknowledgement } from "../shared/ipc";
 import { validatedPreferencePatch } from "./preferenceValidation";
 import { isAllowedExternalURL, isValidHomebrewToken } from "../shared/security";
 import {
@@ -616,7 +616,10 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     await this.trackProducer(this.toolStatus.check());
   }
 
-  async setSearchText(searchText: string, requestID?: string): Promise<void> {
+  async setSearchText(
+    searchText: string,
+    requestID?: string
+  ): Promise<SearchEditAcknowledgement | void> {
     this.requireOpen();
     this.patch({
       searchText,
@@ -624,7 +627,9 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         requestID ??
         (searchText === this.state.searchText ? this.state.searchTextRequestID : randomUUID())
     });
+    const snapshotRevision = this.snapshotRevision;
     this.refreshComputation.refreshDiscoverItems();
+    if (requestID) return { requestID, snapshotRevision };
   }
 
   async setSelectedTab(selectedTab: MenuTab): Promise<void> {
