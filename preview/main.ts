@@ -146,8 +146,19 @@ async function start(): Promise<void> {
           return;
         case "setSearchText":
           snapshot.searchText = args[0] as string;
+          snapshot.searchTextRequestID = args[1] as string | undefined;
           publish();
           return;
+        case "toggleCollapsedSection": {
+          const key = args[0] === "app" ? "collapsedAppSectionIDs" : "collapsedHomebrewSectionIDs";
+          const values = new Set(snapshot[key]);
+          const sectionID = args[1] as string;
+          if (values.has(sectionID)) values.delete(sectionID);
+          else values.add(sectionID);
+          snapshot[key] = [...values].sort();
+          publish();
+          return;
+        }
         case "updatePreferences": {
           const patch = args[0] as Record<string, unknown>;
           if (["system", "light", "dark"].includes(String(patch.appearancePreference)))

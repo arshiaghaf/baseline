@@ -32,6 +32,7 @@ export const ipcChannels = {
   refresh: "baseline:refresh",
   setSearchText: "baseline:setSearchText",
   setSelectedTab: "baseline:setSelectedTab",
+  toggleCollapsedSection: "baseline:toggleCollapsedSection",
   updatePreferences: "baseline:updatePreferences",
   acknowledgeProfileStatsReset: "baseline:acknowledgeProfileStatsReset",
   dismissOperationFailure: "baseline:dismissOperationFailure",
@@ -82,7 +83,8 @@ export type BaselineAPI = {
   refreshToolStatus(): Promise<void>;
   cleanUpHomebrew(): Promise<string>;
   refresh(lightweight?: boolean, forceAppDiscovery?: boolean): Promise<void>;
-  setSearchText(searchText: string): Promise<void>;
+  setSearchText(searchText: string, requestID?: string): Promise<void>;
+  toggleCollapsedSection(kind: "app" | "homebrew", sectionID: string): Promise<void>;
   setSelectedTab(tab: MenuTab): Promise<void>;
   updatePreferences(patch: PreferencePatch): Promise<void>;
   acknowledgeProfileStatsReset(): Promise<void>;

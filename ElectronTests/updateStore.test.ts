@@ -7577,3 +7577,32 @@ async function observeTestPromise<T>(promise: Promise<T>, signal: AbortSignal): 
     signal.removeEventListener("abort", cancel);
   }
 }
+
+it("composes rapid section-toggle intents across windows before persistence completes", async () => {
+  const store = await makeStore({});
+  const first = store.toggleCollapsedSection("app", "recentlyUpdated");
+  const second = store.toggleCollapsedSection("app", "ignored");
+  const third = store.toggleCollapsedSection("homebrew", "installed");
+  expect(store.getSnapshot().collapsedAppSectionIDs).toEqual(["ignored", "recentlyUpdated"]);
+  expect(store.getSnapshot().collapsedHomebrewSectionIDs).toEqual(["installed"]);
+  const fourth = store.toggleCollapsedSection("app", "ignored");
+  const fifth = store.toggleCollapsedSection("app", "ignored");
+  await Promise.all([first, second, third, fourth, fifth]);
+  expect(store.getSnapshot().collapsedAppSectionIDs).toEqual(["ignored", "recentlyUpdated"]);
+});
+
+it("publishes search edit acknowledgements and identifies external query changes", async () => {
+  const store = await makeStore({});
+  await store.setSearchText("first", "renderer:1");
+  expect(store.getSnapshot()).toMatchObject({
+    searchText: "first",
+    searchTextRequestID: "renderer:1"
+  });
+  await store.setSearchText("second", "renderer:2");
+  expect(store.getSnapshot()).toMatchObject({
+    searchText: "second",
+    searchTextRequestID: "renderer:2"
+  });
+  await store.setSearchText("external");
+  expect(store.getSnapshot().searchTextRequestID).not.toBe("renderer:2");
+});

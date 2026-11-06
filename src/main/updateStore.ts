@@ -616,15 +616,39 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     await this.trackProducer(this.toolStatus.check());
   }
 
-  async setSearchText(searchText: string): Promise<void> {
+  async setSearchText(searchText: string, requestID?: string): Promise<void> {
     this.requireOpen();
-    this.patch({ searchText });
+    this.patch({
+      searchText,
+      searchTextRequestID:
+        requestID ??
+        (searchText === this.state.searchText ? this.state.searchTextRequestID : randomUUID())
+    });
     this.refreshComputation.refreshDiscoverItems();
   }
 
   async setSelectedTab(selectedTab: MenuTab): Promise<void> {
     this.requireOpen();
     this.patch({ selectedTab });
+  }
+
+  async toggleCollapsedSection(kind: "app" | "homebrew", sectionID: string): Promise<void> {
+    this.requireOpen();
+    if (
+      (kind !== "app" && kind !== "homebrew") ||
+      typeof sectionID !== "string" ||
+      !sectionID ||
+      sectionID.length > 256
+    ) {
+      throw new Error("Invalid section toggle");
+    }
+    const key = kind === "app" ? "collapsedAppSectionIDs" : "collapsedHomebrewSectionIDs";
+    const values = new Set(this.state[key]);
+    if (values.has(sectionID)) values.delete(sectionID);
+    else values.add(sectionID);
+    // Apply before awaiting persistence so independent windows compose against current state.
+    this.patch({ [key]: [...values].sort() });
+    await this.persist();
   }
 
   async updatePreferences(patch: PreferencePatch): Promise<void> {

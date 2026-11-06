@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Arshia Ghaf
 // SPDX-License-Identifier: GPL-3.0-only
 
+import { useSearchDraft } from "../hooks/useSearchDraft";
 import { baseline } from "../ipc";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AppWindowMac, Beer, CheckCircle2, EyeOff, Search, Server, Settings } from "lucide-react";
@@ -14,7 +15,12 @@ import {
 } from "../helpers/focus";
 import { ToolbarSearch, SearchPalette } from "./Search";
 import { sidebarIconStrokeWidth } from "../constants";
-import { OperationFailures } from "./OperationFailures";
+import {
+  OperationFailures,
+  OperationReportContext,
+  OperationReportPreview,
+  type OperationReportRequest
+} from "./OperationFailures";
 import { SelectedTabContent } from "./DashboardContent";
 import { RefreshFeedback, RefreshControl, UpdateCheckStatus } from "./RefreshFeedback";
 import { selectedTabTitle } from "../helpers/labels";
@@ -23,7 +29,7 @@ import { SelfUpdateButton } from "./SelfUpdateButton";
 import { dismissReleaseNotesPreviews } from "./ReleaseNotesPreview";
 
 export function Dashboard({
-  snapshot,
+  snapshot: backendSnapshot,
   compact,
   searchActive: controlledSearchActive,
   onSearchActiveChange,
@@ -35,12 +41,20 @@ export function Dashboard({
   onSearchActiveChange?: (active: boolean) => void;
   onOpenSettings: () => void;
 }) {
+  const searchDraft = useSearchDraft(backendSnapshot);
+  const snapshot = {
+    ...backendSnapshot,
+    searchText: searchDraft.text,
+    homebrewDiscoverItems:
+      searchDraft.text === backendSnapshot.searchText ? backendSnapshot.homebrewDiscoverItems : []
+  };
   const selectedTab = snapshot.selectedTab;
   const [uncontrolledSearchActive, setUncontrolledSearchActive] = useState(
     compact && Boolean(snapshot.searchText)
   );
   const searchActive = controlledSearchActive ?? uncontrolledSearchActive;
   const setSearchActive = (active: boolean) => {
+    if (!active) searchDraft.finishComposition();
     if (onSearchActiveChange) {
       onSearchActiveChange(active);
       return;
@@ -81,9 +95,39 @@ export function Dashboard({
   );
   const derived = compact && searchActive ? searchDerived : sidebarDerived;
   const [actionConfirmation, setActionConfirmation] = useState<ActionConfirmation>();
+  const [reportRequest, setReportRequest] = useState<OperationReportRequest>();
+  const activeReport =
+    reportRequest &&
+    snapshot.operationFailures?.some(
+      (failure) =>
+        failure.id === reportRequest.failureID &&
+        (snapshot.operationFailureDetails?.[failure.id]?.attemptID ?? failure.occurredAt) ===
+          reportRequest.attemptID
+    )
+      ? reportRequest
+      : undefined;
+  const blockingModal = Boolean(actionConfirmation || activeReport);
+  const reportReturnFocusRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (reportRequest && !activeReport) setReportRequest(undefined);
+    if (activeReport || !reportReturnFocusRef.current) return;
+    const previous = reportReturnFocusRef.current;
+    reportReturnFocusRef.current = null;
+    if (
+      previous.isConnected &&
+      !previous.matches(":disabled") &&
+      !previous.closest("[inert], [aria-hidden='true']")
+    )
+      previous.focus();
+    else
+      (
+        searchButtonRef.current ??
+        (actionSurfaceRef.current ? focusableElementsIn(actionSurfaceRef.current)[0] : undefined)
+      )?.focus();
+  }, [activeReport, reportRequest]);
   useEffect(() => {
     dismissReleaseNotesPreviews();
-  }, [selectedTab, searchActive, actionConfirmation]);
+  }, [selectedTab, searchActive, actionConfirmation, activeReport]);
   const actionSurfaceRef = useRef<HTMLDivElement>(null);
   const keyboardFocusRef = useRef(false);
   const lastKeyboardControlRef = useRef<HTMLElement | null>(null);
@@ -96,6 +140,7 @@ export function Dashboard({
   const shouldRestoreSearchPaletteFocusRef = useRef(false);
 
   const openSearchPalette = () => {
+    if (blockingModal) return;
     const activeElement = document.activeElement;
     searchPaletteReturnFocusRef.current =
       activeElement instanceof HTMLElement && activeElement !== document.body
@@ -135,6 +180,7 @@ export function Dashboard({
       const key = event.key.toLowerCase();
       if (event.metaKey && (key === "f" || key === "k")) {
         event.preventDefault();
+        if (blockingModal) return;
         if (!searchActive) {
           const activeElement = document.activeElement;
           searchPaletteReturnFocusRef.current =
@@ -148,7 +194,7 @@ export function Dashboard({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [compact, searchActive]);
+  }, [compact, searchActive, blockingModal]);
 
   useEffect(() => {
     const appContent = appContentRef.current;
@@ -207,6 +253,7 @@ export function Dashboard({
     void baseline.uninstallHomebrewItem(confirmation.item.id);
   };
   const requestActionConfirmation = (confirmation: ActionConfirmation) => {
+    if (blockingModal) return;
     confirmationOpenRef.current = true;
     const activeElement = document.activeElement;
     confirmationReturnFocusRef.current =
@@ -232,6 +279,7 @@ export function Dashboard({
           </div>
           <div className="topbar-actions">
             <ToolbarSearch
+              searchDraft={searchDraft}
               open={searchActive}
               snapshot={snapshot}
               onToggle={() => setSearchActive(!searchActive)}
@@ -312,47 +360,69 @@ export function Dashboard({
   }
 
   return (
-    <ActionConfirmationContext.Provider value={requestActionConfirmation}>
-      <div
-        ref={actionSurfaceRef}
-        onKeyDownCapture={() => {
-          keyboardFocusRef.current = true;
-        }}
-        onMouseDownCapture={() => {
-          keyboardFocusRef.current = false;
-          lastKeyboardControlRef.current = null;
-        }}
-        onFocusCapture={(event) => {
-          if (keyboardFocusRef.current && event.target instanceof HTMLElement)
-            lastKeyboardControlRef.current = event.target;
-        }}
-        className={actionConfirmation ? "action-surface action-surface-disabled" : "action-surface"}
-        aria-hidden={actionConfirmation ? true : undefined}
-        inert={Boolean(actionConfirmation)}
-      >
+    <OperationReportContext.Provider
+      value={(request) => {
+        if (blockingModal || (!compact && searchActive)) return;
+        reportReturnFocusRef.current = request.returnFocusElement;
+        setReportRequest(request);
+      }}
+    >
+      <ActionConfirmationContext.Provider value={requestActionConfirmation}>
         <div
-          ref={appContentRef}
-          className="app-content-surface"
-          aria-hidden={!compact && searchActive ? true : undefined}
-        >
-          {shell}
-        </div>
-        {!compact && searchActive && !actionConfirmation && (
-          <SearchPalette snapshot={snapshot} derived={searchDerived} onClose={closeSearchPalette} />
-        )}
-      </div>
-      {actionConfirmation && (
-        <ActionConfirmationOverlay
-          confirmation={actionConfirmation}
-          onCancel={() => {
-            confirmationOpenRef.current = false;
-            setActionConfirmation(undefined);
+          ref={actionSurfaceRef}
+          onKeyDownCapture={() => {
+            keyboardFocusRef.current = true;
           }}
-          onConfirm={confirmAction}
-          returnFocusElement={confirmationReturnFocusRef.current}
-        />
-      )}
-    </ActionConfirmationContext.Provider>
+          onMouseDownCapture={() => {
+            keyboardFocusRef.current = false;
+            lastKeyboardControlRef.current = null;
+          }}
+          onFocusCapture={(event) => {
+            if (keyboardFocusRef.current && event.target instanceof HTMLElement)
+              lastKeyboardControlRef.current = event.target;
+          }}
+          className={blockingModal ? "action-surface action-surface-disabled" : "action-surface"}
+          aria-hidden={blockingModal ? true : undefined}
+          inert={blockingModal}
+        >
+          <div
+            ref={appContentRef}
+            className="app-content-surface"
+            aria-hidden={!compact && searchActive ? true : undefined}
+          >
+            {shell}
+          </div>
+          {!compact && searchActive && !blockingModal && (
+            <SearchPalette
+              searchDraft={searchDraft}
+              snapshot={snapshot}
+              derived={searchDerived}
+              onClose={closeSearchPalette}
+            />
+          )}
+        </div>
+        {activeReport && (
+          <OperationReportPreview
+            report={activeReport.report}
+            restoreFocus={false}
+            onClose={() =>
+              setReportRequest((current) => (current === activeReport ? undefined : current))
+            }
+          />
+        )}
+        {actionConfirmation && (
+          <ActionConfirmationOverlay
+            confirmation={actionConfirmation}
+            onCancel={() => {
+              confirmationOpenRef.current = false;
+              setActionConfirmation(undefined);
+            }}
+            onConfirm={confirmAction}
+            returnFocusElement={confirmationReturnFocusRef.current}
+          />
+        )}
+      </ActionConfirmationContext.Provider>
+    </OperationReportContext.Provider>
   );
 }
 

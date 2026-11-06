@@ -76,7 +76,8 @@ const argumentValidators: Record<InvokeMethod, ValueValidator[]> = {
   refreshToolStatus: [],
   cleanUpHomebrew: [],
   refresh: [optional(isBoolean), optional(isBoolean)],
-  setSearchText: [isString],
+  setSearchText: [isString, optional(notesString)],
+  toggleCollapsedSection: [(value) => value === "app" || value === "homebrew", notesString],
   setSelectedTab: [
     (value) =>
       typeof value === "string" &&
