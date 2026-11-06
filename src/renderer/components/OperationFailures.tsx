@@ -3,12 +3,23 @@
 
 import { PermissionHelp } from "./PermissionHelp";
 import { baseline } from "../ipc";
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { BaselineSnapshot } from "../../shared/domain";
 import { operationFailureDescription, type OperationFailure } from "../../shared/operationFailures";
 import { operationIssueReport } from "../../shared/operationReport";
 import { trapFocusWithin } from "../helpers/focus";
+
+export type OperationReportRequest = {
+  failureID: string;
+  attemptID: string;
+  returnFocusElement: HTMLElement;
+  report: ReturnType<typeof operationIssueReport>;
+};
+
+export const OperationReportContext = createContext<
+  ((request: OperationReportRequest) => void) | undefined
+>(undefined);
 
 export function OperationFailures({ snapshot }: { snapshot: BaselineSnapshot }) {
   if (!snapshot.operationFailures?.length) return null;
@@ -47,6 +58,7 @@ export function OperationFailureRow({
   attemptID: string;
   outputTail?: string;
 }) {
+  const requestReport = useContext(OperationReportContext);
   const [report, setReport] = useState<ReturnType<typeof operationIssueReport>>();
   const [copyMessage, setCopyMessage] = useState("");
   return (
@@ -80,7 +92,17 @@ export function OperationFailureRow({
           </button>
           <button
             type="button"
-            onClick={() => setReport(operationIssueReport(failure, outputTail))}
+            onClick={(event) => {
+              const nextReport = operationIssueReport(failure, outputTail);
+              if (requestReport)
+                requestReport({
+                  failureID: failure.id,
+                  attemptID,
+                  report: nextReport,
+                  returnFocusElement: event.currentTarget
+                });
+              else setReport(nextReport);
+            }}
           >
             Report issue
           </button>
@@ -101,8 +123,10 @@ export function OperationFailureRow({
 
 export function OperationReportPreview({
   report,
-  onClose
+  onClose,
+  restoreFocus = true
 }: {
+  restoreFocus?: boolean;
   report: ReturnType<typeof operationIssueReport>;
   onClose: () => void;
 }) {
@@ -124,9 +148,14 @@ export function OperationReportPreview({
     window.addEventListener("keydown", handleKey, true);
     return () => {
       window.removeEventListener("keydown", handleKey, true);
-      previous?.focus();
+      if (
+        restoreFocus &&
+        previous?.isConnected &&
+        !previous.closest("[inert], [aria-hidden='true']")
+      )
+        previous.focus();
     };
-  }, []);
+  }, [restoreFocus]);
   return createPortal(
     <div
       className="confirmation-backdrop"

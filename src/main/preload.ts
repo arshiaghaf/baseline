@@ -31,7 +31,10 @@ const api: BaselineAPI = {
   refreshToolStatus: () => ipcRenderer.invoke(ipcChannels.refreshToolStatus),
   refresh: (lightweight?: boolean, forceAppDiscovery?: boolean) =>
     ipcRenderer.invoke(ipcChannels.refresh, lightweight, forceAppDiscovery),
-  setSearchText: (searchText: string) => ipcRenderer.invoke(ipcChannels.setSearchText, searchText),
+  setSearchText: (searchText: string, requestID?: string) =>
+    ipcRenderer.invoke(ipcChannels.setSearchText, searchText, requestID),
+  toggleCollapsedSection: (kind, sectionID) =>
+    ipcRenderer.invoke(ipcChannels.toggleCollapsedSection, kind, sectionID),
   setSelectedTab: (tab) => ipcRenderer.invoke(ipcChannels.setSelectedTab, tab),
   updatePreferences: (patch: PreferencePatch) =>
     ipcRenderer.invoke(ipcChannels.updatePreferences, patch),

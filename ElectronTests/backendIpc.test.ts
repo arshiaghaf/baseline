@@ -33,7 +33,8 @@ const validArguments = {
   refreshToolStatus: [],
   cleanUpHomebrew: [],
   refresh: [false, true],
-  setSearchText: [""],
+  setSearchText: ["", "renderer:1"],
+  toggleCollapsedSection: ["app", "installed"],
   setSelectedTab: ["apps"],
   updatePreferences: [{ autoRefreshEnabled: false }],
   acknowledgeProfileStatsReset: [],
@@ -361,5 +362,20 @@ it.each(["settings", "menubar"])(
     expect(closeGuide).toHaveBeenCalledOnce();
     expect(showMain).not.toHaveBeenCalled();
     expect(caller.webContents.mainFrame.url).toBe(`file:///fixture/index.html#/${route}`);
+  }
+);
+
+it.each(["", "x".repeat(257), "renderer\n1", 42])(
+  "rejects malformed search edit acknowledgement IDs (%s)",
+  async (requestID) => {
+    const handler = handlers.get(ipcChannels.setSearchText)!;
+    const event = {
+      sender: windows[0]!.webContents,
+      senderFrame: windows[0]!.webContents.mainFrame
+    } as unknown as IpcMainInvokeEvent;
+    await expect(
+      Promise.resolve().then(() => handler(event, "query", requestID))
+    ).rejects.toThrow();
+    expect(store.setSearchText).not.toHaveBeenCalled();
   }
 );
