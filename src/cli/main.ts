@@ -4,57 +4,23 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
-import { cliHelp, parseCLIArguments } from "./arguments";
+import { cliHelp, cliWantsJSON, parseCLIArguments } from "./arguments";
 import { cliUserData } from "./endpoint";
 import { sendCLIRequest } from "./client";
-import {
-  CLIError,
-  cliExit,
-  type CLIOperation,
-  type CLIResponse,
-  type CLITarget
-} from "../shared/cli";
+import { CLIError, cliExit, type CLIOperation, type CLIResponse } from "../shared/cli";
 import packageJSON from "../../package.json";
 
-const clean = (value: string) =>
-  Array.from(value, (c) =>
-    c.charCodeAt(0) < 32 || (c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159) ? " " : c
-  ).join("");
-const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+import { human, humanWarnings } from "./presentation";
 
-function human(response: CLIResponse): string {
-  if (response.error) return `${clean(response.error.message)}\n`;
-  const data = response.data as {
-    targets?: CLITarget[];
-    target?: CLITarget;
-    operation?: CLIOperation;
-    diagnostics?: string;
-    planID?: string;
-    effects?: string;
-    version?: string;
-    lastExplicitCheckAt?: string | null;
-    lastRefreshAt?: string | null;
-    homebrewCheckStatus?: string;
-    appDiscoveryComplete?: boolean;
-    freshForUpdates?: boolean;
-    notices?: string[];
-  };
-  if (data?.operation) {
-    const op = data.operation;
-    return `${op.id}  ${op.state}${op.message ? `\n${clean(op.message)}` : ""}\n${op.results.map((r) => `${clean(r.id)}  ${r.status}${r.message ? ` — ${clean(r.message)}` : ""}\n`).join("")}`;
-  }
-  if (data?.targets || data?.target) {
-    const targets = data.targets ?? [data.target!];
-    return `${targets.length ? "ID\tNAME\tSOURCE\tINSTALLED\tAVAILABLE\tACTION\n" : "No installed targets are recorded. Run baseline check.\n"}${targets.map((t) => [t.id, t.name, t.source, t.installedVersion, t.availableVersion ?? "—", t.action].map(clean).join("\t")).join("\n")}\n${data.target?.reason ? `${clean(data.target.reason)}\n` : ""}Last scan: ${clean(data.lastRefreshAt ?? "Never")}. Run baseline check for a fresh scan.\n${data.planID ? `Plan: ${data.planID}\n${clean(data.effects ?? "")}\n` : ""}`;
-  }
-  if (data?.diagnostics) return `${data.diagnostics.split("\n").map(clean).join("\n")}\n`;
-  if (data?.version)
-    return `Baseline ${clean(data.version)}\nLast explicit check: ${clean(data.lastExplicitCheckAt ?? "Never")}\nLast scan: ${clean(data.lastRefreshAt ?? "Never")}\nApp discovery: ${data.appDiscoveryComplete ? "complete" : "not complete"}\nHomebrew check: ${clean(data.homebrewCheckStatus ?? "unknown")}\n${data.freshForUpdates ? "A recent explicit check is available; individual target protections still apply." : "Run baseline check before updating."}\n${(data.notices ?? []).map((notice) => `${clean(notice)}\n`).join("")}`;
-  return `${JSON.stringify(response.data, null, 2)}\n`;
-}
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const closedStreams = new Set<NodeJS.WriteStream>();
+let outputFailed = false;
+const write = (stream: NodeJS.WriteStream, content: string) => {
+  if (!closedStreams.has(stream)) stream.write(content);
+};
 
 async function main(): Promise<void> {
-  let json = process.argv.includes("--json");
+  let json = cliWantsJSON(process.argv.slice(2));
   let operationID: string | undefined;
   let sessionID = "";
   let interrupted = false;
@@ -85,15 +51,16 @@ async function main(): Promise<void> {
   process.on("SIGINT", onInterrupt);
   process.on("SIGTERM", onTerminate);
   const output = (response: CLIResponse) => {
-    process.exitCode = response.exitCode;
+    process.exitCode = response.exitCode || (outputFailed ? cliExit.failed : 0);
     const content = json ? `${JSON.stringify(response)}\n` : human(response);
-    (json || response.ok ? process.stdout : process.stderr).write(content);
+    write(json || response.ok ? process.stdout : process.stderr, content);
+    if (!json) write(process.stderr, humanWarnings(response));
   };
   try {
     const parsed = parseCLIArguments(process.argv.slice(2));
     json = parsed.json;
     if (parsed.local) {
-      const text = parsed.local === "help" ? cliHelp : packageJSON.version;
+      const text = parsed.local === "help" ? (parsed.help ?? cliHelp) : packageJSON.version;
       if (json)
         output({
           schemaVersion: 1,
@@ -102,7 +69,7 @@ async function main(): Promise<void> {
           exitCode: 0,
           data: parsed.local === "help" ? { help: text } : { version: text }
         });
-      else process.stdout.write(`${text}\n`);
+      else write(process.stdout, `${text}\n`);
       return;
     }
     const request = parsed.request!;
@@ -182,7 +149,7 @@ async function main(): Promise<void> {
     sessionID = probe.sessionID;
     checkInterrupt();
     if (operationID && request.command !== "operation")
-      process.stderr.write(`Operation: ${operationID}\n`);
+      write(process.stderr, `Operation: ${operationID}\n`);
     let response = await send(request);
     if (response.sessionID !== sessionID)
       throw new CLIError(
@@ -249,7 +216,10 @@ async function main(): Promise<void> {
 
 for (const stream of [process.stdout, process.stderr])
   stream.on("error", (error: NodeJS.ErrnoException) => {
-    if (error.code === "EPIPE") process.exit(0);
-    else process.exit(1);
+    closedStreams.add(stream);
+    // A closed consumer stops presentation, not observation of accepted work.
+    // Preserve failures, timeouts and signals, including errors discovered later.
+    if (error.code !== "EPIPE") outputFailed = true;
+    process.exitCode ||= outputFailed ? cliExit.failed : cliExit.success;
   });
 void main();
