@@ -62,3 +62,96 @@ it.each(["caller", "deadline"] as const)(
     }
   }
 );
+
+it.each([false, true])(
+  "keeps the original historical ID when its alias path is reused (retained: %s)",
+  async (unavailable) => {
+    const alias = "/fixture/Alias.app";
+    const canonical = "/fixture/Canonical.app";
+    const controller = new AbortController();
+    const collapsed = await reconcileScannedApps(
+      [app(canonical)],
+      [],
+      [app(alias)],
+      new Map([
+        [alias, canonical],
+        [canonical, canonical]
+      ]),
+      [alias],
+      controller.signal
+    );
+    const original = collapsed.scannedApps[0]!;
+    expect(original).toMatchObject({ id: alias, bundlePath: canonical });
+    vi.spyOn(testingExports.identityRuntime, "realpath").mockRejectedValue(new Error("offline"));
+    let previous = [original];
+    let newID: string | undefined;
+    for (const reverse of [true, false, true]) {
+      const scanned = unavailable ? [app(alias)] : [app(canonical), app(alias)];
+      if (reverse) scanned.reverse();
+      const result = await reconcileScannedApps(
+        scanned,
+        unavailable ? [original] : [],
+        previous,
+        new Map(scanned.map((item) => [item.bundlePath, item.bundlePath])),
+        [alias],
+        controller.signal
+      );
+      previous = [...result.scannedApps, ...result.retainedApps];
+      expect(previous).toHaveLength(2);
+      expect(new Set(previous.map((item) => item.id)).size).toBe(2);
+      expect(previous.find((item) => item.bundlePath === canonical)?.id).toBe(alias);
+      const replacementID = previous.find((item) => item.bundlePath === alias)!.id;
+      expect(replacementID).not.toBe(alias);
+      if (newID) expect(replacementID).toBe(newID);
+      newID = replacementID;
+    }
+    const recovered = await reconcileScannedApps(
+      [app(alias), app(canonical)],
+      [],
+      previous,
+      new Map([
+        [alias, alias],
+        [canonical, canonical]
+      ]),
+      [alias],
+      controller.signal
+    );
+    expect(recovered.scannedApps.find((item) => item.bundlePath === canonical)?.id).toBe(alias);
+    expect(recovered.scannedApps.find((item) => item.bundlePath === alias)?.id).toBe(newID);
+  }
+);
+
+it("repairs an already-colliding snapshot without assigning the original ignore identity to the replacement", async () => {
+  const alias = app("/fixture/Alias.app");
+  const original = { ...app("/fixture/Canonical.app"), id: alias.id };
+  const result = await reconcileScannedApps(
+    [alias, app(original.bundlePath)],
+    [],
+    [alias, original],
+    new Map([
+      [alias.bundlePath, alias.bundlePath],
+      [original.bundlePath, original.bundlePath]
+    ]),
+    [original.id],
+    new AbortController().signal
+  );
+  expect(result.scannedApps.find((item) => item.bundlePath === original.bundlePath)?.id).toBe(
+    original.id
+  );
+  expect(result.scannedApps.find((item) => item.bundlePath === alias.bundlePath)?.id).not.toBe(
+    original.id
+  );
+});
+
+it("does not give a new installation an orphaned ignored ID", async () => {
+  const fresh = app("/fixture/Utility.app");
+  const result = await reconcileScannedApps(
+    [fresh],
+    [],
+    [],
+    new Map(),
+    [fresh.id],
+    new AbortController().signal
+  );
+  expect(result.scannedApps[0]!.id).not.toBe(fresh.id);
+});
