@@ -234,6 +234,8 @@ export type HomebrewManagedItem = {
   fullToken?: string;
   tap?: string;
   caskMetadata?: HomebrewCaskEntry;
+  /** False retains cached cask evidence without current installed-membership authority. */
+  caskMembershipVerified?: boolean;
   // Installed formula metadata proves canonical names and historical rack aliases.
   formulaIdentity?: { name: string; fullName: string; tap: string; oldNames: string[] };
   // False retains identity for saved-ID continuity only, never command authorization.

@@ -1217,7 +1217,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     this.installedMetadataByItemID = {};
     this.homebrewCleanupRequiresInventory = true;
     this.homebrewOperations.cancelQueuedHomebrewUpdates();
-    this.invalidateFormulaMembership();
+    this.invalidateHomebrewMembership({ formula: false, cask: false });
     this.invalidateHomebrewUpdateTargets();
     this.patch({
       isHomebrewInstalled: true,
@@ -1312,30 +1312,44 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
                   identityCounts.get(`${metadata.kind}:${metadata.identity}`) === 1
               )
             );
-        if (result.inventoryReadSucceededByKind?.formula === false) {
-          this.invalidateFormulaMembership();
+        if (
+          result.inventoryReadSucceededByKind?.formula === false ||
+          result.inventoryReadSucceededByKind?.cask === false
+        ) {
+          this.invalidateHomebrewMembership(result.inventoryReadSucceededByKind);
         }
       },
       invalidateBeforeRelease: () => {
         this.installedMetadataByItemID = {};
         if (this.isHomebrewCleanupUnconfirmed()) this.blockHomebrewAfterUnconfirmedCleanup();
-        this.invalidateFormulaMembership();
+        this.invalidateHomebrewMembership({ formula: false, cask: false });
       }
     });
   }
 
-  private invalidateFormulaMembership(): void {
+  private invalidateHomebrewMembership(
+    readSucceeded: NonNullable<HomebrewInventoryResult["inventoryReadSucceededByKind"]>
+  ): void {
     // Revoke execution before releasing the inventory lock, even if another
     // refresh provider is still pending. Keep saved identity/pins as evidence.
-    const readSucceeded = { formula: false, cask: true };
     const homebrewItems = preservePreviousHomebrewInventoryMembership(
-      [],
-      this.state.homebrewItems.filter((item) => item.kind === "formula"),
+      this.state.homebrewItems,
+      this.state.homebrewItems,
       readSucceeded
     );
-    homebrewItems.push(...this.state.homebrewItems.filter((item) => item.kind === "cask"));
+    const unverifiedCaskTokens = new Set(
+      homebrewItems
+        .filter((item) => item.kind === "cask" && !homebrewCommandToken(item))
+        .map((item) => item.token.toLowerCase())
+    );
     this.patch({
       homebrewItems,
+      homebrewCheckStatus: "incomplete",
+      updates: this.state.updates.filter(
+        (update) =>
+          update.source !== "homebrew" ||
+          !unverifiedCaskTokens.has(update.homebrewToken?.toLowerCase() ?? "")
+      ),
       homebrewFormulaIdentityContinuity: preserveFormulaIdentityContinuity(
         homebrewItems,
         this.state,

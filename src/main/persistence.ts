@@ -337,6 +337,7 @@ function normalizeHomebrewItem(value: SavedRecord): HomebrewManagedItem | undefi
     fullToken: text(value.fullToken),
     tap: text(value.tap),
     caskMetadata: normalizeCaskMetadata(record(value.caskMetadata)),
+    caskMembershipVerified: boolean(value.caskMembershipVerified),
     formulaIdentity:
       identity &&
       typeof identity.name === "string" &&
