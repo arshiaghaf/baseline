@@ -107,6 +107,78 @@ async function makeStore(
 }
 
 describe("update store lifecycle boundaries", () => {
+  it.each(["startup", "timer"])(
+    "owns persistent %s refresh failures while preserving foreground and quit rejection, then recovers",
+    async (entry) => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      const directory = await mkdtemp(path.join(os.tmpdir(), "baseline-background-save-"));
+      directories.push(directory);
+      const persistence = new SnapshotPersistence(directory);
+      const failure = new Error("Synthetic ENOSPC");
+      let failing = entry === "startup";
+      const save = vi.spyOn(persistence, "save").mockImplementation(async () => {
+        if (failing) throw failure;
+      });
+      const scanApplications = vi.fn(async () => []);
+      const store = await makeStore(
+        { scanner: { scanApplications } },
+        {},
+        {
+          persistence,
+          persisted: {
+            ...defaultPersistedSnapshot(),
+            autoRefreshEnabled: true,
+            refreshIntervalMinutes: entry === "startup" ? 5 : 60
+          }
+        }
+      );
+      const unhandled: unknown[] = [];
+      const onUnhandled = (error: unknown) => {
+        unhandled.push(error);
+      };
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        if (entry === "startup") await store.start();
+        else {
+          // Install the timer through the public preference path before writes fail.
+          await store.updatePreferences({ refreshIntervalMinutes: 5, autoRefreshEnabled: true });
+          failing = true;
+          save.mockClear();
+          await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+        }
+        await vi.waitFor(() => {
+          expect(save).toHaveBeenCalledTimes(2);
+          expect(store.getSnapshot().isRefreshing).toBe(false);
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(unhandled).toEqual([]);
+        expect(store.getSnapshot()).toMatchObject({
+          refreshCheckFailed: true,
+          refreshErrorMessage: failure.message
+        });
+        await expect(store.refresh(false)).rejects.toBe(failure);
+        // A background error handler must never turn a failed durable quit into success.
+        await expect(store.prepareToQuit()).rejects.toBe(failure);
+        failing = false;
+        const scans = scanApplications.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+        await vi.waitFor(() => {
+          expect(scanApplications).toHaveBeenCalledTimes(scans + 1);
+          expect(store.getSnapshot().isRefreshing).toBe(false);
+        });
+        expect(store.getSnapshot().refreshErrorMessage).toBeUndefined();
+        expect(store.getSnapshot().refreshCheckFailed).toBe(false);
+        expect(unhandled).toEqual([]);
+        expect(await store.prepareToQuit()).toBe(true);
+      } finally {
+        failing = false;
+        await store.prepareToQuit();
+        process.removeListener("unhandledRejection", onUnhandled);
+        save.mockRestore();
+      }
+    }
+  );
+
   it.each(["refresh", "add directory", "remove directory", "cancelled cleanup"])(
     "preserves outstanding source-search strength when superseded by %s",
     async (replacement) => {
