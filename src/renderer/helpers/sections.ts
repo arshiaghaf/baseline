@@ -169,7 +169,7 @@ export function uninstallableHomebrewItemForApp(
   snapshot: BaselineSnapshot
 ): HomebrewManagedItem | undefined {
   const matchedByExplicitLink = snapshot.homebrewItems.find(
-    (item) => item.kind === "cask" && item.appID === app.id
+    (item) => item.kind === "cask" && item.appID === app.id && item.caskMembershipVerified !== false
   );
   if (matchedByExplicitLink) {
     return matchedByExplicitLink;
