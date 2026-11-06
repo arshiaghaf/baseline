@@ -14,6 +14,10 @@ export function useSearchDraft(snapshot: BaselineSnapshot) {
   const composing = useRef(false);
   const errorOwner = useRef<string | undefined>(undefined);
 
+  const lastSynchronizedQuery = useRef({
+    text: snapshot.searchText,
+    requestID: snapshot.searchTextRequestID
+  });
   const latestSnapshot = useRef(snapshot);
   latestSnapshot.current = snapshot;
   const pending = useRef<{
@@ -42,6 +46,12 @@ export function useSearchDraft(snapshot: BaselineSnapshot) {
     if (clientID.current && requestID?.startsWith(`${clientID.current}:`)) {
       if (requestID !== `${clientID.current}:${sequence.current}`) return;
     }
+    if (
+      lastSynchronizedQuery.current.text === incoming.searchText &&
+      lastSynchronizedQuery.current.requestID === requestID
+    )
+      return;
+    lastSynchronizedQuery.current = { text: incoming.searchText, requestID };
     errorOwner.current = requestID;
     setText(incoming.searchText);
     setError(false);

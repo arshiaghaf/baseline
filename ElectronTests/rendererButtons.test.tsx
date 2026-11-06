@@ -5513,3 +5513,48 @@ it.each(["", "60"])(
     }
   }
 );
+
+it.each([false, true])(
+  "retains a failed search draft and retry error through unrelated snapshot revisions (echoBeforeFailure=%s)",
+  async (echoBeforeFailure) => {
+    let reject!: (reason: Error) => void;
+    vi.mocked(window.baseline.setSearchText).mockImplementationOnce(
+      () =>
+        new Promise<void>((_, fail) => {
+          reject = fail;
+        })
+    );
+    const { rerender } = render(<SearchField snapshot={snapshot({ snapshotRevision: 0 })} />);
+    const input = screen.getByPlaceholderText("Search");
+    fireEvent.change(input, { target: { value: "draft" } });
+    const firstID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1];
+    const authoritative = echoBeforeFailure
+      ? { searchText: "draft", searchTextRequestID: firstID }
+      : { searchText: "" };
+    if (echoBeforeFailure)
+      rerender(<SearchField snapshot={snapshot({ ...authoritative, snapshotRevision: 1 })} />);
+    await act(async () => reject(new Error("Request failed")));
+    rerender(
+      <SearchField
+        snapshot={snapshot({ ...authoritative, snapshotRevision: 2, isRefreshing: true })}
+      />
+    );
+    expect(input).toHaveValue("draft");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not update search");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(window.baseline.setSearchText).toHaveBeenCalledTimes(2);
+    const retryID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1];
+    expect(retryID).not.toBe(firstID);
+    rerender(
+      <SearchField
+        snapshot={snapshot({
+          searchText: "draft",
+          searchTextRequestID: retryID,
+          snapshotRevision: 3
+        })}
+      />
+    );
+    expect(input).toHaveValue("draft");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  }
+);
