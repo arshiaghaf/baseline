@@ -45,15 +45,21 @@ status. The app's selected tab and search filter do not affect CLI listings.
 do not scan apps, refresh sources or execute package commands. If necessary the
 CLI launches Baseline without opening its windows or running automatic checks.
 Opening Baseline normally then restores its usual GUI and automatic checks.
-`--help` and `--version` work without starting the backend.
+`--help` and `--version` work without starting the backend. Use `baseline help
+update` or `baseline update --help` for command-specific usage. Value options
+accept both `--timeout 60` and `--timeout=60`. A standalone `--` ends option
+parsing, so subsequent values are literal target IDs, including `--help` or
+`--json`. Unknown commands remain usage errors even with `--help`.
 
 ## Check, preview and update
 
 `check` runs a full scan and forces metadata revalidation through the app's source
 clients. It reports incomplete checks instead of claiming everything is current.
 Individual source timestamps remain distinct from overall scan completion.
-`list --json` exposes each target's `checkedAt` and `checkStatus`, plus overall
-refresh health and notices. An unresolved source is not proof that an app is
+Both human `list` and `inspect` show each target's check status and timestamp
+separately from its available version. They include overall scan health, with
+incomplete/failed scan warnings and notices on stderr. JSON exposes the same
+health through `checkedAt`, `checkStatus`, refresh fields and notices. An unresolved source is not proof that an app is
 current. A successful check does not imply every app has an available update.
 The runtime `appDiscoveryComplete` field reports whether all app discovery
 completed; unreadable folders or app records make the check partial and do not
@@ -131,14 +137,24 @@ An update reports `updated` only after reconciled installed state verifies the
 new version at or above the planned version. A no-op, failed command, missing
 target or incomplete reconciliation cannot produce success. Multi-target runs
 return individual outcomes and preserve successful results when later work
-fails. They are not transactions and do not roll back installed updates.
+fails. If the installed version is verified but a later Homebrew step fails,
+the target remains `updated`, with a `maintenanceFailure` classification, while
+the operation is `partial` and exits 1. Historical maintenance failures do not
+turn a new successful update into a failure. Do not repeat an installed update
+to repair a later step; inspect `doctor` and Homebrew first. Known target failures
+include safe `failure.reason` and `failure.status` fields. When completion cannot
+be verified, `outcome: "unknown"` distinguishes uncertainty from a known command
+failure. They are not transactions and do not roll back installed updates.
 
 ## JSON and exit codes
 
 `--json` writes exactly one JSON object to stdout, including errors. Progress
 and the pre-submission operation ID use stderr. There is no pager, ANSI styling,
 interactive stdin prompt, or TTY-dependent behavior. Human text is for reading;
-automation should consume the JSON contract.
+automation should consume the JSON contract. Human presentation visibly escapes
+terminal control and invisible formatting characters; JSON retains exact IDs.
+A closed output pipe suppresses further output on that stream without changing
+a failed operation into success or stopping observation of accepted work.
 
 ```json
 {
@@ -169,7 +185,9 @@ changes require a new `schemaVersion`.
 | 130 / 143 | Interrupted by SIGINT / SIGTERM; accepted work may continue         |
 
 `doctor --json` provides capability discovery, limits, these exit codes and the
-existing diagnostic report. IDs and diagnostics can contain local app paths;
+existing diagnostic report and safe recorded failure classifications. Human
+`doctor` includes capabilities and exit codes too. Recorded failures may predate
+the current request; neither output format includes raw command failure output. IDs and diagnostics can contain local app paths;
 review them before sharing. Listings omit icons, feed URLs, private command
 output and profile-history records. Neither command reads credentials.
 

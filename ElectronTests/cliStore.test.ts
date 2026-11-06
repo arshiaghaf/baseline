@@ -289,3 +289,45 @@ it.each(["ignored", "self", "missing-update", "missing-app"])(
     expect(f.command).not.toHaveBeenCalled();
   }
 );
+
+it("preserves installed completion and reports a later Homebrew failure through the real store", async () => {
+  const f = await storeFixture();
+  await terminal(f.service, await f.service.handle({ schemaVersion: 1, command: "check" }));
+  f.command.mockImplementation(async (args) => {
+    if (args[0] !== "upgrade") return { success: true, status: 0, output: "" };
+    f.installed[0]!.installedVersion = version("2");
+    f.installed[0]!.isOutdated = false;
+    return {
+      success: false,
+      status: 1,
+      output:
+        "🍺 /opt/homebrew/Cellar/example-tool/2: 3 files, 1KB\nError: permission denied in later step"
+    };
+  });
+  const op = await terminal(
+    f.service,
+    await f.service.handle({
+      schemaVersion: 1,
+      command: "update",
+      ids: ["brew:formula:example-tool"],
+      yes: true
+    })
+  );
+  expect(f.store.getSnapshot().operationFailures).toMatchObject([
+    { entityID: "homebrew:maintenance", reason: "permission", status: 1 }
+  ]);
+  expect(op).toMatchObject({
+    state: "partial",
+    exitCode: 1,
+    results: [
+      {
+        status: "updated",
+        maintenanceFailure: { reason: "permission", status: 1 },
+        message: expect.stringContaining("Do not repeat the update")
+      }
+    ]
+  });
+  expect((await f.persistence.load()).homebrewItems[0]!.installedVersion.raw).toBe("2");
+  expect(f.command.mock.calls.filter(([args]) => args[0] === "upgrade")).toHaveLength(1);
+  expect(JSON.stringify(op)).not.toContain("/opt/homebrew/Cellar");
+});
