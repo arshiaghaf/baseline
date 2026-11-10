@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { createHash, randomUUID } from "node:crypto";
-import type { BaselineSnapshot } from "../shared/domain";
+import type { BaselineSnapshot, HomebrewManagedItem, UpdateRecord } from "../shared/domain";
 import { homebrewCommandToken } from "../shared/homebrewIdentity";
 import { compareVersions } from "../shared/version";
 import { renderDiagnostics } from "../shared/diagnostics";
@@ -210,22 +210,30 @@ export class CLIService {
   }
 
   private targets(s: BaselineSnapshot): CLITarget[] {
+    // Build joins once per snapshot. Retain the first match, as the previous
+    // array lookups did, and never cache action authority between requests.
+    const updates = new Map<string, UpdateRecord>();
+    for (const update of s.updates) {
+      if (!updates.has(update.appID)) updates.set(update.appID, update);
+    }
+    const casks = new Map<string, HomebrewManagedItem>();
+    for (const item of s.homebrewItems) {
+      if (item.kind !== "cask") continue;
+      const token = item.token.toLowerCase();
+      if (!casks.has(token)) casks.set(token, item);
+    }
+    const ignoredApps = new Set(s.ignoredIDs);
+    const ignoredPackages = new Set(s.ignoredHomebrewItemIDs);
     const apps: CLITarget[] = s.apps.map((app) => {
-      const update = s.updates.find((u) => u.appID === app.id);
-      const ignored = s.ignoredIDs.includes(app.id);
+      const update = updates.get(app.id);
+      const ignored = ignoredApps.has(app.id);
       const self = app.bundleIdentifier?.toLowerCase() === "com.arshiaghaf.baseline";
       const selectedCask =
-        update?.source === "homebrew"
-          ? s.homebrewItems.find(
-              (item) =>
-                item.kind === "cask" &&
-                item.token.toLowerCase() === update.homebrewToken?.toLowerCase()
-            )
+        update?.source === "homebrew" && update.homebrewToken !== undefined
+          ? casks.get(update.homebrewToken.toLowerCase())
           : undefined;
       const pinned = selectedCask?.pinned === true;
-      const ignoredRoute = Boolean(
-        selectedCask && s.ignoredHomebrewItemIDs.includes(selectedCask.id)
-      );
+      const ignoredRoute = Boolean(selectedCask && ignoredPackages.has(selectedCask.id));
       const blocked = ignored || ignoredRoute || pinned || self || isMacOSManagedApp(app);
       return {
         id: `app:${app.id}`,
@@ -254,8 +262,7 @@ export class CLIService {
     });
     const packages: CLITarget[] = s.homebrewItems.map((item) => {
       const ignored =
-        s.ignoredHomebrewItemIDs.includes(item.id) ||
-        Boolean(item.appID && s.ignoredIDs.includes(item.appID));
+        ignoredPackages.has(item.id) || Boolean(item.appID && ignoredApps.has(item.appID));
       const unverifiable =
         item.isOutdated &&
         (!item.latestVersion || compareVersions(item.latestVersion, item.installedVersion) <= 0);
