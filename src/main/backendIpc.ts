@@ -76,13 +76,14 @@ const argumentValidators: Record<InvokeMethod, ValueValidator[]> = {
   refreshToolStatus: [],
   cleanUpHomebrew: [],
   refresh: [optional(isBoolean), optional(isBoolean)],
-  setSearchText: [isString],
+  setSearchText: [isString, optional(notesString)],
+  toggleCollapsedSection: [(value) => value === "app" || value === "homebrew", notesString],
   setSelectedTab: [
     (value) =>
       typeof value === "string" &&
       ["all", "apps", "homebrew", "installed", "ignored"].includes(value)
   ],
-  updatePreferences: [isPreferencePatch],
+  updatePreferences: [isPreferencePatch, optional(isBoolean)],
   acknowledgeProfileStatsReset: [],
   dismissOperationFailure: [isString],
   toggleIgnoredApp: [isString],

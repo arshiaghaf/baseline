@@ -2,19 +2,21 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { createHash, randomUUID } from "node:crypto";
-import type { BaselineSnapshot } from "../shared/domain";
+import type { BaselineSnapshot, HomebrewManagedItem, UpdateRecord } from "../shared/domain";
 import { homebrewCommandToken } from "../shared/homebrewIdentity";
 import { compareVersions } from "../shared/version";
 import { renderDiagnostics } from "../shared/diagnostics";
 import {
   CLIError,
   cliExit,
+  cliFailureDescription,
   validateCLIRequest,
   type CLIOperation,
   type CLIRequest,
   type CLIResponse,
   type CLITarget
 } from "../shared/cli";
+import type { OperationFailure } from "../shared/operationFailures";
 import type { UpdateStore } from "./updateStore";
 import { isMacOSManagedApp } from "./macOSManagedApps";
 
@@ -27,6 +29,21 @@ type Store = Pick<
   | "performHomebrewUpdate"
   | "performCLIAppHandoff"
 >;
+const safeFailure = (failure: OperationFailure) => ({
+  reason: failure.reason,
+  status: failure.status
+});
+const maintenanceFailure = (snapshot: BaselineSnapshot) =>
+  snapshot.operationFailures?.find(
+    (failure) => failure.entityID === "homebrew:maintenance" && failure.operation === "update"
+  );
+const maintenanceEvidence = (snapshot: BaselineSnapshot) => {
+  const failure = maintenanceFailure(snapshot);
+  return {
+    summary: JSON.stringify(failure),
+    attemptID: failure && snapshot.operationFailureDetails?.[failure.id]?.attemptID
+  };
+};
 const freshnessMS = 15 * 60_000;
 
 /** One facade over the GUI store. No second inventory, command runner or persistence. */
@@ -88,6 +105,13 @@ export class CLIService {
       return {
         ...this.health(snapshot),
         diagnostics: renderDiagnostics(snapshot, this.version),
+        failures: (snapshot.operationFailures ?? []).map((failure) => ({
+          id: failure.id,
+          entityID: failure.entityID,
+          operation: failure.operation,
+          ...safeFailure(failure),
+          occurredAt: failure.occurredAt
+        })),
         capabilities: {
           commands: ["status", "list", "inspect", "check", "update", "operation", "doctor"],
           maxTargets: 50,
@@ -210,22 +234,30 @@ export class CLIService {
   }
 
   private targets(s: BaselineSnapshot): CLITarget[] {
+    // Build joins once per snapshot. Retain the first match, as the previous
+    // array lookups did, and never cache action authority between requests.
+    const updates = new Map<string, UpdateRecord>();
+    for (const update of s.updates) {
+      if (!updates.has(update.appID)) updates.set(update.appID, update);
+    }
+    const casks = new Map<string, HomebrewManagedItem>();
+    for (const item of s.homebrewItems) {
+      if (item.kind !== "cask") continue;
+      const token = item.token.toLowerCase();
+      if (!casks.has(token)) casks.set(token, item);
+    }
+    const ignoredApps = new Set(s.ignoredIDs);
+    const ignoredPackages = new Set(s.ignoredHomebrewItemIDs);
     const apps: CLITarget[] = s.apps.map((app) => {
-      const update = s.updates.find((u) => u.appID === app.id);
-      const ignored = s.ignoredIDs.includes(app.id);
+      const update = updates.get(app.id);
+      const ignored = ignoredApps.has(app.id);
       const self = app.bundleIdentifier?.toLowerCase() === "com.arshiaghaf.baseline";
       const selectedCask =
-        update?.source === "homebrew"
-          ? s.homebrewItems.find(
-              (item) =>
-                item.kind === "cask" &&
-                item.token.toLowerCase() === update.homebrewToken?.toLowerCase()
-            )
+        update?.source === "homebrew" && update.homebrewToken !== undefined
+          ? casks.get(update.homebrewToken.toLowerCase())
           : undefined;
       const pinned = selectedCask?.pinned === true;
-      const ignoredRoute = Boolean(
-        selectedCask && s.ignoredHomebrewItemIDs.includes(selectedCask.id)
-      );
+      const ignoredRoute = Boolean(selectedCask && ignoredPackages.has(selectedCask.id));
       const blocked = ignored || ignoredRoute || pinned || self || isMacOSManagedApp(app);
       return {
         id: `app:${app.id}`,
@@ -254,8 +286,7 @@ export class CLIService {
     });
     const packages: CLITarget[] = s.homebrewItems.map((item) => {
       const ignored =
-        s.ignoredHomebrewItemIDs.includes(item.id) ||
-        Boolean(item.appID && s.ignoredIDs.includes(item.appID));
+        ignoredPackages.has(item.id) || Boolean(item.appID && ignoredApps.has(item.appID));
       const unverifiable =
         item.isOutdated &&
         (!item.latestVersion || compareVersions(item.latestVersion, item.installedVersion) <= 0);
@@ -310,7 +341,7 @@ export class CLIService {
       if (!target)
         throw new CLIError(
           "unknown-target",
-          "Target not found. Copy an exact ID from baseline list; names and package tokens are not accepted.",
+          `Target not found: ${JSON.stringify(id)}. Copy an exact ID from baseline list; names and package tokens are not accepted.`,
           cliExit.usage
         );
       return target;
@@ -486,6 +517,7 @@ export class CLIService {
             }
             // Existing store revalidates membership, canonical identity, pins and locks
             // immediately before the command, and reconciles before it resolves.
+            const previousMaintenance = maintenanceEvidence(snapshot);
             await this.store.performHomebrewUpdate(target.id.slice(5));
             const after = this.store.getSnapshot();
             const item = after.homebrewItems.find((i) => `brew:${i.id}` === target.id);
@@ -500,23 +532,45 @@ export class CLIService {
               compareVersions(item.installedVersion, target.installedVersion) > 0 &&
               target.availableVersion !== undefined &&
               compareVersions(item.installedVersion, target.availableVersion) >= 0;
+            const maintenance = maintenanceFailure(after);
+            const currentMaintenance = maintenanceEvidence(after);
+            // Starting a mutation clears old private details. Losing an old
+            // attempt ID is not evidence that its historical failure recurred.
+            const newMaintenance =
+              maintenance &&
+              (currentMaintenance.summary !== previousMaintenance.summary ||
+                (currentMaintenance.attemptID !== undefined &&
+                  currentMaintenance.attemptID !== previousMaintenance.attemptID))
+                ? maintenance
+                : undefined;
             op.results.push({
               id: target.id,
               status: verified ? "updated" : "failed",
+              ...(failure ? { failure: safeFailure(failure) } : {}),
+              ...(newMaintenance ? { maintenanceFailure: safeFailure(newMaintenance) } : {}),
+              ...(!verified && !failure ? { outcome: "unknown" as const } : {}),
               message: verified
-                ? undefined
-                : "Update completion was not verified. Inspect installed state and doctor before retrying."
+                ? newMaintenance
+                  ? `Installed version verified, but a later Homebrew step failed. ${cliFailureDescription(newMaintenance)} Do not repeat the update to repair this step; inspect baseline doctor and Homebrew first.`
+                  : undefined
+                : failure
+                  ? `${cliFailureDescription(failure)} Inspect installed state before retrying; the package may have changed.`
+                  : "Update completion was not verified; the outcome is unknown. Inspect installed state and doctor before retrying."
             });
           } catch {
             op.results.push({
               id: target.id,
               status: "failed",
+              outcome: "unknown",
               message:
-                "The target did not complete cleanly. Inspect its installed state before retrying."
+                "The target outcome is unknown; it did not complete cleanly. Inspect its installed state before retrying."
             });
           }
         }
-        const failed = op.results.some((result) => ["failed", "blocked"].includes(result.status));
+        const failed = op.results.some(
+          (result) =>
+            ["failed", "blocked"].includes(result.status) || result.maintenanceFailure !== undefined
+        );
         const action = op.results.some((result) => result.status === "requires-user-action");
         op.state = failed
           ? op.results.some((result) => result.status === "updated")

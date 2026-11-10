@@ -32,6 +32,7 @@ export const baseline: Pick<
   | "setSelectedTab"
   | "showMainWindow"
   | "showSettings"
+  | "toggleCollapsedSection"
   | "toggleIgnoredApp"
   | "toggleIgnoredHomebrew"
   | "uninstallHomebrewItem"
@@ -64,6 +65,7 @@ export const baseline: Pick<
   setSelectedTab: (...args) => window.baseline.setSelectedTab(...args),
   showMainWindow: (...args) => window.baseline.showMainWindow(...args),
   showSettings: (...args) => window.baseline.showSettings(...args),
+  toggleCollapsedSection: (...args) => window.baseline.toggleCollapsedSection(...args),
   toggleIgnoredApp: (...args) => window.baseline.toggleIgnoredApp(...args),
   toggleIgnoredHomebrew: (...args) => window.baseline.toggleIgnoredHomebrew(...args),
   uninstallHomebrewItem: (...args) => window.baseline.uninstallHomebrewItem(...args),

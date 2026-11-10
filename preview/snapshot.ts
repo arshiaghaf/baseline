@@ -36,6 +36,7 @@ export function previewSnapshot(input: Partial<BaselineSnapshot> = {}): Baseline
     homebrewDiscoverProgressByItemID: {},
     laggingHomebrewCaskTokens: [],
     defaultScanDirectories: [],
+    welcomeDismissed: true,
     ...input,
     updateIntroductionDismissed: true,
     autoRefreshEnabled: false,

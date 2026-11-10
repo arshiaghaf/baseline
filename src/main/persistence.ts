@@ -147,6 +147,8 @@ function normalizeSnapshot(input: SavedRecord): PersistedSnapshot {
     additionalDirectories: strings(input.additionalDirectories),
     collapsedAppSectionIDs: strings(input.collapsedAppSectionIDs),
     collapsedHomebrewSectionIDs: strings(input.collapsedHomebrewSectionIDs),
+    // Existing profiles predate the welcome; only new profiles opt into it.
+    welcomeDismissed: boolean(input.welcomeDismissed) ?? true,
     updateIntroductionDismissed: boolean(input.updateIntroductionDismissed) ?? false,
     autoRefreshEnabled: boolean(input.autoRefreshEnabled) ?? defaults.autoRefreshEnabled,
     useMasForAppStoreUpdates:
@@ -337,6 +339,7 @@ function normalizeHomebrewItem(value: SavedRecord): HomebrewManagedItem | undefi
     fullToken: text(value.fullToken),
     tap: text(value.tap),
     caskMetadata: normalizeCaskMetadata(record(value.caskMetadata)),
+    caskMembershipVerified: boolean(value.caskMembershipVerified),
     formulaIdentity:
       identity &&
       typeof identity.name === "string" &&

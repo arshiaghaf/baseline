@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // @vitest-environment node
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile, readdir } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, unlink, writeFile, readdir } from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import { BundleScannerClient, testingExports } from "../src/main/bundleScanner";
 import { UpdateStore } from "../src/main/updateStore";
@@ -43,18 +43,22 @@ function record(bundlePath: string): AppRecord {
     sourceHint: "unknown"
   };
 }
-async function app(bundlePath: string) {
+async function app(bundlePath: string, identifier = "test.utility") {
   await mkdir(`${bundlePath}/Contents`, { recursive: true });
   await writeFile(
     `${bundlePath}/Contents/Info.plist`,
-    '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleName</key><string>Utility</string><key>CFBundleIdentifier</key><string>test.utility</string><key>CFBundleShortVersionString</key><string>1</string></dict></plist>'
+    `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleName</key><string>Utility</string><key>CFBundleIdentifier</key><string>${identifier}</string><key>CFBundleShortVersionString</key><string>1</string></dict></plist>`
   );
 }
 async function storeFixture(
   root: string,
   directories: string[],
   apps: AppRecord[] = [],
-  ignore = false
+  ignore = false,
+  actions: Partial<
+    Pick<ConstructorParameters<typeof UpdateStore>[0], "openExternalURL" | "openAppBundle">
+  > = {},
+  appStore?: NonNullable<ConstructorParameters<typeof UpdateStore>[0]["clients"]>["appStore"]
 ) {
   const store = new UpdateStore({
     persistence: new SnapshotPersistence(`${root}/state`),
@@ -66,6 +70,7 @@ async function storeFixture(
     },
     openExternalURL: async () => false,
     openAppBundle: async () => {},
+    ...actions,
     profileStatsIntegrity: {
       verifyOrInitialize: async (stats) => stats,
       seal: async (stats) => stats
@@ -74,7 +79,7 @@ async function storeFixture(
     runMasCommand: async () => ({ success: false, status: 1, output: "" }),
     clients: {
       scanner: new BundleScannerClient(),
-      appStore: { lookupOutcome: async () => ({ type: "completed" }) },
+      appStore: appStore ?? { lookupOutcome: async () => ({ type: "completed" }) },
       sparkle: { lookupOutcome: async () => ({ type: "completed" }) },
       homebrew: {
         fetchIndex: async () => emptyHomebrewCaskIndex,
@@ -549,4 +554,93 @@ it("does not confirm absence when a required plist becomes unreadable after the 
   } finally {
     await chmod(`${unreadable}/Contents`, 0o700);
   }
+});
+
+it("keeps lookup results, ignores and app actions separate after a real alias path is reused", async () => {
+  const root = await rootFixture();
+  const directory = `${root}/Apps`;
+  const aliases = `${root}/Aliases`;
+  const canonical = `${directory}/Canonical.app`;
+  const alias = `${aliases}/Alias.app`;
+  const peer = `${aliases}/Peer.app`;
+  await app(canonical, "test.original");
+  await mkdir(aliases);
+  await symlink(canonical, alias);
+  await symlink(canonical, peer);
+  const openExternalURL = vi.fn(async () => true);
+  const openAppBundle = vi.fn(async () => {});
+  const store = await storeFixture(
+    root,
+    [directory, aliases],
+    [record(alias)],
+    true,
+    { openExternalURL, openAppBundle },
+    {
+      lookupOutcome: async (identifier) => ({
+        type: "completed",
+        value: {
+          remoteVersion: version(identifier === "test.original" ? "2" : "9"),
+          updateURL: `https://example.com/${identifier}`
+        }
+      })
+    }
+  );
+  await store.updatePreferences({ useMasForAppStoreUpdates: false });
+  await store.refresh(false);
+  expect(store.getSnapshot().apps).toHaveLength(1);
+  expect(store.getSnapshot().apps[0]).toMatchObject({ id: alias, bundlePath: canonical });
+  await unlink(alias);
+  await app(alias, "test.replacement");
+  let replacementID: string | undefined;
+  for (let iteration = 0; iteration < 2; iteration++) {
+    await store.refresh(false);
+    const snapshot = store.getSnapshot();
+    expect(snapshot.apps).toHaveLength(2);
+    expect(snapshot.updates).toHaveLength(2);
+    const original = snapshot.apps.find((item) => item.bundleIdentifier === "test.original")!;
+    const replacement = snapshot.apps.find((item) => item.bundleIdentifier === "test.replacement")!;
+    expect(original.id).toBe(alias);
+    expect(replacement.id).not.toBe(original.id);
+    if (replacementID) expect(replacement.id).toBe(replacementID);
+    replacementID = replacement.id;
+    expect(snapshot.ignoredIDs).toEqual([original.id]);
+    expect(snapshot.updates.find((item) => item.appID === original.id)?.updateURL).toBe(
+      "https://example.com/test.original"
+    );
+    expect(snapshot.updates.find((item) => item.appID === replacement.id)?.updateURL).toBe(
+      "https://example.com/test.replacement"
+    );
+    await store.openApp(original.id);
+    expect(openAppBundle).toHaveBeenLastCalledWith(canonical);
+    await store.openApp(replacement.id);
+    expect(openAppBundle).toHaveBeenLastCalledWith(alias);
+    await store.performAppUpdate(original.id);
+    expect(openExternalURL).toHaveBeenLastCalledWith("https://example.com/test.original");
+    await store.performCLIAppHandoff(replacement.id);
+    expect(openExternalURL).toHaveBeenLastCalledWith("https://example.com/test.replacement");
+  }
+  await store.toggleIgnoredApp(replacementID!);
+  expect(store.getSnapshot().ignoredIDs).toContain(alias);
+  expect(store.getSnapshot().ignoredIDs).toContain(replacementID);
+  await store.toggleIgnoredApp(replacementID!);
+  expect(store.getSnapshot().ignoredIDs).toEqual([alias]);
+});
+
+it("refuses ambiguous saved app actions before any refresh can repair them", async () => {
+  const root = await rootFixture();
+  const original = record(`${root}/Original.app`);
+  const replacement = { ...record(`${root}/Replacement.app`), id: original.id };
+  const openExternalURL = vi.fn(async () => true);
+  const openAppBundle = vi.fn(async () => {});
+  const store = await storeFixture(root, [], [original, replacement], false, {
+    openExternalURL,
+    openAppBundle
+  });
+  await expect(store.openApp(original.id)).rejects.toThrow("ambiguous");
+  await expect(store.performAppUpdate(original.id)).rejects.toThrow("ambiguous");
+  await expect(store.performCLIAppHandoff(original.id)).rejects.toThrow("ambiguous");
+  await expect(store.toggleIgnoredApp(original.id)).rejects.toThrow("ambiguous");
+  expect(openExternalURL).not.toHaveBeenCalled();
+  expect(openAppBundle).not.toHaveBeenCalled();
+  expect(store.getSnapshot().ignoredIDs).toEqual([]);
 });

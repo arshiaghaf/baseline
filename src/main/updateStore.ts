@@ -25,7 +25,7 @@ import type {
 import { emptyHomebrewCaskIndex, normalizeAppearancePreference } from "../shared/domain";
 import type { HomebrewMaintenanceRunEvent } from "../shared/homebrewProgress";
 import { homebrewCommandToken, installedCaskEntry } from "../shared/homebrewIdentity";
-import type { PreferencePatch } from "../shared/ipc";
+import type { PreferencePatch, SearchEditAcknowledgement } from "../shared/ipc";
 import { validatedPreferencePatch } from "./preferenceValidation";
 import { isAllowedExternalURL, isValidHomebrewToken } from "../shared/security";
 import {
@@ -186,7 +186,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         this.refreshRecoveryRequired = undefined;
       }
     },
-    () => void this.refresh(true)
+    () => this.runBackgroundRefresh(true)
   );
 
   constructor(options: {
@@ -546,7 +546,14 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     this.requireOpen();
     await this.refreshToolStatus();
     this.restartAutoRefreshLoop();
-    void this.refresh(false);
+    this.runBackgroundRefresh(false);
+  }
+
+  private runBackgroundRefresh(lightweight: boolean, options: RefreshOptions = {}): void {
+    // Computation publishes the failure before attempting its recovery save.
+    // Detached callers own the final rejection when persistence remains unavailable;
+    // explicit refresh and quit callers must still observe their rejected saves.
+    void this.refresh(lightweight, options).catch(() => undefined);
   }
 
   getSnapshot(): BaselineSnapshot {
@@ -616,10 +623,20 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     await this.trackProducer(this.toolStatus.check());
   }
 
-  async setSearchText(searchText: string): Promise<void> {
+  async setSearchText(
+    searchText: string,
+    requestID?: string
+  ): Promise<SearchEditAcknowledgement | void> {
     this.requireOpen();
-    this.patch({ searchText });
+    this.patch({
+      searchText,
+      searchTextRequestID:
+        requestID ??
+        (searchText === this.state.searchText ? this.state.searchTextRequestID : randomUUID())
+    });
+    const snapshotRevision = this.snapshotRevision;
     this.refreshComputation.refreshDiscoverItems();
+    if (requestID) return { requestID, snapshotRevision };
   }
 
   async setSelectedTab(selectedTab: MenuTab): Promise<void> {
@@ -627,7 +644,29 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     this.patch({ selectedTab });
   }
 
-  async updatePreferences(patch: PreferencePatch): Promise<void> {
+  async toggleCollapsedSection(kind: "app" | "homebrew", sectionID: string): Promise<void> {
+    this.requireOpen();
+    if (
+      (kind !== "app" && kind !== "homebrew") ||
+      typeof sectionID !== "string" ||
+      !sectionID ||
+      sectionID.length > 256
+    ) {
+      throw new Error("Invalid section toggle");
+    }
+    const key = kind === "app" ? "collapsedAppSectionIDs" : "collapsedHomebrewSectionIDs";
+    const values = new Set(this.state[key]);
+    if (values.has(sectionID)) values.delete(sectionID);
+    else values.add(sectionID);
+    // Apply before awaiting persistence so independent windows compose against current state.
+    this.patch({ [key]: [...values].sort() });
+    await this.persist();
+  }
+
+  async updatePreferences(
+    patch: PreferencePatch,
+    acknowledge = false
+  ): Promise<{ snapshotRevision: number } | void> {
     this.requireOpen();
     patch = validatedPreferencePatch(patch);
     const refreshIntervalMinutes =
@@ -647,8 +686,10 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         this.state.autoRefreshEnabled ||
       refreshIntervalMinutes !== this.state.refreshIntervalMinutes;
     this.patch({ ...patch, ...visibility, appearancePreference, refreshIntervalMinutes });
+    const snapshotRevision = this.snapshotRevision;
     if (scheduleChanged) this.restartAutoRefreshLoop();
     await this.persist();
+    if (acknowledge) return { snapshotRevision };
   }
 
   async checkForSelfUpdate(): Promise<SelfUpdateRecord | undefined> {
@@ -753,7 +794,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         this.patch({ isRefreshing: false });
         this.restartAutoRefreshLoop();
         if (this.refreshRecoveryRequired && !this.hasActiveUpdateOperation()) {
-          void this.refresh(false, this.refreshRecoveryRequired).catch(() => undefined);
+          this.runBackgroundRefresh(false, this.refreshRecoveryRequired);
         }
       }
     }
@@ -774,6 +815,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
 
   async toggleIgnoredApp(appID: string): Promise<void> {
     this.requireOpen();
+    this.assertUnambiguousAppID(appID);
     const ignored = new Set(this.state.ignoredIDs);
     toggleSet(ignored, appID);
     this.patch({ ignoredIDs: [...ignored].sort() });
@@ -943,8 +985,15 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     await this.refresh(false, { forceMetadata: false });
   }
 
+  private assertUnambiguousAppID(appID: string): void {
+    if (this.state.apps.filter((app) => app.id === appID).length > 1) {
+      throw new Error("The app identity is ambiguous. Refresh and try again.");
+    }
+  }
+
   async openApp(appID: string): Promise<void> {
     this.requireOpen();
+    this.assertUnambiguousAppID(appID);
     const appRecord = this.state.apps.find((app) => app.id === appID);
     if (appRecord) {
       await this.openAppWithFeedback(appRecord);
@@ -989,6 +1038,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
 
   async performAppUpdate(appID: string): Promise<void> {
     this.beginUserMutation();
+    this.assertUnambiguousAppID(appID);
     const appRecord = this.state.apps.find((app) => app.id === appID);
     if (!appRecord) {
       return;
@@ -1089,6 +1139,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
    * opened app/URL as an installed update. The GUI retains its existing routes. */
   async performCLIAppHandoff(appID: string): Promise<void> {
     this.requireOpen();
+    this.assertUnambiguousAppID(appID);
     const app = this.state.apps.find((candidate) => candidate.id === appID);
     const update = this.state.updates.find((candidate) => candidate.appID === appID);
     if (
@@ -1217,7 +1268,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     this.installedMetadataByItemID = {};
     this.homebrewCleanupRequiresInventory = true;
     this.homebrewOperations.cancelQueuedHomebrewUpdates();
-    this.invalidateFormulaMembership();
+    this.invalidateHomebrewMembership({ formula: false, cask: false });
     this.invalidateHomebrewUpdateTargets();
     this.patch({
       isHomebrewInstalled: true,
@@ -1312,30 +1363,44 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
                   identityCounts.get(`${metadata.kind}:${metadata.identity}`) === 1
               )
             );
-        if (result.inventoryReadSucceededByKind?.formula === false) {
-          this.invalidateFormulaMembership();
+        if (
+          result.inventoryReadSucceededByKind?.formula === false ||
+          result.inventoryReadSucceededByKind?.cask === false
+        ) {
+          this.invalidateHomebrewMembership(result.inventoryReadSucceededByKind);
         }
       },
       invalidateBeforeRelease: () => {
         this.installedMetadataByItemID = {};
         if (this.isHomebrewCleanupUnconfirmed()) this.blockHomebrewAfterUnconfirmedCleanup();
-        this.invalidateFormulaMembership();
+        this.invalidateHomebrewMembership({ formula: false, cask: false });
       }
     });
   }
 
-  private invalidateFormulaMembership(): void {
+  private invalidateHomebrewMembership(
+    readSucceeded: NonNullable<HomebrewInventoryResult["inventoryReadSucceededByKind"]>
+  ): void {
     // Revoke execution before releasing the inventory lock, even if another
     // refresh provider is still pending. Keep saved identity/pins as evidence.
-    const readSucceeded = { formula: false, cask: true };
     const homebrewItems = preservePreviousHomebrewInventoryMembership(
-      [],
-      this.state.homebrewItems.filter((item) => item.kind === "formula"),
+      this.state.homebrewItems,
+      this.state.homebrewItems,
       readSucceeded
     );
-    homebrewItems.push(...this.state.homebrewItems.filter((item) => item.kind === "cask"));
+    const unverifiedCaskTokens = new Set(
+      homebrewItems
+        .filter((item) => item.kind === "cask" && !homebrewCommandToken(item))
+        .map((item) => item.token.toLowerCase())
+    );
     this.patch({
       homebrewItems,
+      homebrewCheckStatus: "incomplete",
+      updates: this.state.updates.filter(
+        (update) =>
+          update.source !== "homebrew" ||
+          !unverifiedCaskTokens.has(update.homebrewToken?.toLowerCase() ?? "")
+      ),
       homebrewFormulaIdentityContinuity: preserveFormulaIdentityContinuity(
         homebrewItems,
         this.state,
@@ -1626,6 +1691,7 @@ function snapshotForPersistence(snapshot: BaselineSnapshot): PersistedSnapshot {
     selectedTab: "all",
     collapsedAppSectionIDs: snapshot.collapsedAppSectionIDs,
     collapsedHomebrewSectionIDs: snapshot.collapsedHomebrewSectionIDs,
+    welcomeDismissed: snapshot.welcomeDismissed,
     updateIntroductionDismissed: snapshot.updateIntroductionDismissed,
     autoRefreshEnabled: snapshot.autoRefreshEnabled,
     refreshIntervalMinutes: snapshot.refreshIntervalMinutes,

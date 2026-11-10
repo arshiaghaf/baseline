@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Arshia Ghaf
 // SPDX-License-Identifier: GPL-3.0-only
 
+import { SearchField, ToolbarSearch } from "../src/renderer/components/Search";
+import { RefreshIntervalInput } from "../src/renderer/components/SettingsView";
 import { PermissionGuide } from "../src/renderer/components/PermissionGuide";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -93,9 +95,44 @@ it("omits unsupported Homebrew source controls before any notes lookup", () => {
   ).not.toBeInTheDocument();
 });
 
+it.each([
+  [
+    "app row",
+    (state: BaselineSnapshot) => <AppRow app={app} snapshot={state} recentlyUpdated={false} />
+  ],
+  ["app card", (state: BaselineSnapshot) => <AppUpdateCard app={app} snapshot={state} />],
+  [
+    "cask row",
+    (state: BaselineSnapshot) => <HomebrewRow item={state.homebrewItems[0]!} snapshot={state} />
+  ],
+  [
+    "cask card",
+    (state: BaselineSnapshot) => (
+      <HomebrewUpdateCard item={state.homebrewItems[0]!} snapshot={state} />
+    )
+  ]
+] as const)(
+  "revokes %s uninstall after membership failure and restores it after recovery",
+  (_label, component) => {
+    const retained = {
+      ...cask,
+      caskMembershipVerified: false,
+      isOutdated: false,
+      latestVersion: undefined
+    };
+    const view = render(component(snapshot({ homebrewItems: [retained], updates: [] })));
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    expect(screen.getByRole("menuitem", { name: "Ignore" })).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Uninstall" })).not.toBeInTheDocument();
+    view.rerender(component(snapshot()));
+    expect(screen.getByRole("menuitem", { name: "Uninstall" })).toBeEnabled();
+  }
+);
+
 function snapshot(patch: Partial<BaselineSnapshot> = {}): BaselineSnapshot {
   return {
     ...defaultPersistedSnapshot(),
+    welcomeDismissed: true,
     apps: [app],
     updates: [update],
     homebrewItems: [cask],
@@ -154,6 +191,7 @@ function installBaselineMock() {
     refreshToolStatus: vi.fn(),
     cleanUpHomebrew: vi.fn(async () => "Homebrew cleanup completed."),
     refresh: vi.fn(async () => undefined),
+    toggleCollapsedSection: vi.fn(),
     setSearchText: vi.fn(),
     setSelectedTab: vi.fn(),
     updatePreferences: vi.fn(),
@@ -2019,7 +2057,7 @@ describe("renderer button parity", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Clear Search" }));
-    expect(window.baseline.setSearchText).toHaveBeenCalledWith("");
+    expect(window.baseline.setSearchText).toHaveBeenCalledWith("", expect.any(String));
 
     unmount();
     vi.mocked(window.baseline.setSearchText).mockClear();
@@ -2033,7 +2071,7 @@ describe("renderer button parity", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     fireEvent.click(screen.getByRole("button", { name: "Clear Search" }));
-    expect(window.baseline.setSearchText).toHaveBeenCalledWith("");
+    expect(window.baseline.setSearchText).toHaveBeenCalledWith("", expect.any(String));
   });
 
   it("opens compact toolbar search and collapses it on outside click without clearing text", async () => {
@@ -2116,7 +2154,7 @@ describe("renderer button parity", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Clear Search" }));
 
-    expect(window.baseline.setSearchText).toHaveBeenCalledWith("");
+    expect(window.baseline.setSearchText).toHaveBeenCalledWith("", expect.any(String));
     expect(screen.getByRole("button", { name: "Close Search" })).toBeInTheDocument();
   });
 
@@ -2574,8 +2612,12 @@ describe("renderer button parity", () => {
       });
       expect(screen.getByRole("button", { name: "Updated" })).toBeInTheDocument();
       fireEvent.change(screen.getByPlaceholderText("Search"), { target: { value: "example-app" } });
-      expect(window.baseline.setSearchText).toHaveBeenCalledWith("example-app");
-      await publish({ searchText: "example-app", homebrewDiscoverItems: [second] });
+      expect(window.baseline.setSearchText).toHaveBeenCalledWith("example-app", expect.any(String));
+      await publish({
+        searchText: "example-app",
+        searchTextRequestID: vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1],
+        homebrewDiscoverItems: [second]
+      });
       await click(screen.getByRole("button", { name: "Install" }));
       await click(screen.getByRole("button", { name: "Install Example App" }));
       expect(window.baseline.installHomebrewItem).toHaveBeenNthCalledWith(2, second);
@@ -3967,9 +4009,7 @@ describe("renderer button parity", () => {
     expect(screen.queryByText("1.0.0 installed")).not.toBeInTheDocument();
 
     fireEvent.click(installedToggle);
-    expect(window.baseline.updatePreferences).toHaveBeenCalledWith({
-      collapsedAppSectionIDs: []
-    });
+    expect(window.baseline.toggleCollapsedSection).toHaveBeenCalledWith("app", "installed");
   });
 
   it("explains cleanup between Homebrew and mas and shows completion", async () => {
@@ -4155,14 +4195,20 @@ describe("renderer button parity", () => {
 
     const enabledInterval = screen.getByRole("textbox", { name: "Interval minutes" });
     fireEvent.change(enabledInterval, { target: { value: "30" } });
-    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith({
-      refreshIntervalMinutes: 30
-    });
+    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith(
+      {
+        refreshIntervalMinutes: 30
+      },
+      true
+    );
     fireEvent.blur(enabledInterval);
 
-    expect(window.baseline.updatePreferences).toHaveBeenCalledWith({
-      refreshIntervalMinutes: 30
-    });
+    expect(window.baseline.updatePreferences).toHaveBeenCalledWith(
+      {
+        refreshIntervalMinutes: 30
+      },
+      true
+    );
   });
 
   it("lets refresh interval edits build multi-digit values before committing", () => {
@@ -4176,18 +4222,27 @@ describe("renderer button parity", () => {
     fireEvent.change(interval, { target: { value: "15" } });
 
     expect(interval).toHaveValue("15");
-    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith({
-      refreshIntervalMinutes: 5
-    });
-    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith({
-      refreshIntervalMinutes: 15
-    });
+    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith(
+      {
+        refreshIntervalMinutes: 5
+      },
+      true
+    );
+    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith(
+      {
+        refreshIntervalMinutes: 15
+      },
+      true
+    );
 
     fireEvent.keyDown(interval, { key: "Enter" });
 
-    expect(window.baseline.updatePreferences).toHaveBeenCalledWith({
-      refreshIntervalMinutes: 15
-    });
+    expect(window.baseline.updatePreferences).toHaveBeenCalledWith(
+      {
+        refreshIntervalMinutes: 15
+      },
+      true
+    );
     rerender(<SettingsView snapshot={snapshot({ refreshIntervalMinutes: 15 })} />);
     fireEvent.blur(interval);
     expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(1);
@@ -4994,7 +5049,7 @@ describe("Homebrew empty copy scope", () => {
 });
 
 describe("permission introduction", () => {
-  it("waits for saved preferences, dismisses without gating checks, and stays dismissed on relaunch", async () => {
+  it("waits for saved preferences and keeps interrupted welcomes available", async () => {
     let load!: (value: BaselineSnapshot) => void;
     vi.mocked(window.baseline.getSnapshot).mockImplementationOnce(
       () =>
@@ -5002,30 +5057,58 @@ describe("permission introduction", () => {
           load = resolve;
         })
     );
-    vi.mocked(window.baseline.updatePreferences).mockResolvedValue(undefined);
     window.location.hash = "/main";
     const view = render(<App />);
-    expect(screen.queryByText("Welcome to Baseline")).not.toBeInTheDocument();
-    await act(async () => load(snapshot()));
-    await waitFor(() => expect(window.baseline.permissionGuide).toHaveBeenCalledWith("show"));
+    expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument();
+    await act(async () => load(snapshot({ welcomeDismissed: false })));
+    expect(screen.getByRole("button", { name: "Skip welcome" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(window.baseline.updatePreferences).not.toHaveBeenCalled();
-    expect(screen.queryByText("Welcome to Baseline")).not.toBeInTheDocument();
-    expect(window.baseline.openExternal).not.toHaveBeenCalled();
+    expect(window.baseline.permissionGuide).not.toHaveBeenCalled();
     view.unmount();
-    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(
-      snapshot({ updateIntroductionDismissed: true })
+    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot({ welcomeDismissed: false }));
+    const resumed = render(<App />);
+    await screen.findByText("Welcome to Baseline");
+    fireEvent.click(screen.getByRole("button", { name: "Skip welcome" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument()
     );
+    expect(window.baseline.updatePreferences).toHaveBeenCalledWith({ welcomeDismissed: true });
+    resumed.unmount();
+    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot({ welcomeDismissed: true }));
     render(<App />);
     await act(async () => {});
-    expect(screen.queryByText("Welcome to Baseline")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument();
+  });
+
+  it("retains the welcome when an optimistic preference event precedes a failed disk write", async () => {
+    let receive!: Parameters<typeof window.baseline.onSnapshotChanged>[0];
+    vi.mocked(window.baseline.onSnapshotChanged).mockImplementation((callback) => {
+      receive = callback;
+      return () => {};
+    });
+    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot({ welcomeDismissed: false }));
+    vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(async () => {
+      receive(snapshot({ welcomeDismissed: true }));
+      throw new Error("disk unavailable");
+    });
+    window.location.hash = "/main";
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Skip welcome" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t be saved");
+    expect(screen.getByRole("button", { name: "Skip welcome" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Skip welcome" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument()
+    );
   });
 
   it("keeps first-run copy out of the compact tray and permission guidance inside failure details", async () => {
-    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot());
+    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot({ welcomeDismissed: false }));
     window.location.hash = "/menubar";
     const view = render(<App />);
     await act(async () => {});
-    expect(screen.queryByText("Welcome to Baseline")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument();
     view.unmount();
     render(
       <OperationFailures
@@ -5120,5 +5203,543 @@ it.each(["icon", "text", "padding"])(
     fireEvent.dragStart(target);
     expect(card).toHaveAttribute("draggable", "true");
     expect(window.baseline.permissionGuide).toHaveBeenCalledWith("drag");
+  }
+);
+
+describe("renderer state ownership regressions", () => {
+  beforeEach(installBaselineMock);
+
+  it.each([false, true])(
+    "preserves immediate search edits and rejects old acknowledgements (compact=%s)",
+    (compact) => {
+      const view = (state: BaselineSnapshot) =>
+        compact ? (
+          <ToolbarSearch open snapshot={state} onToggle={() => {}} onClose={() => {}} />
+        ) : (
+          <SearchField snapshot={state} />
+        );
+      const { rerender } = render(view(snapshot()));
+      const input = screen.getByPlaceholderText("Search") as HTMLInputElement;
+      input.focus();
+      fireEvent.change(input, { target: { value: "a" } });
+      expect(input).toHaveValue("a");
+      const firstID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1];
+      fireEvent.change(input, { target: { value: "ab" } });
+      const secondID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1];
+      input.setSelectionRange(1, 1);
+      rerender(view(snapshot({ searchText: "a", searchTextRequestID: firstID })));
+      expect(input).toHaveValue("ab");
+      expect(input.selectionStart).toBe(1);
+      rerender(view(snapshot({ searchText: "ab", searchTextRequestID: secondID })));
+      expect(input.selectionStart).toBe(1);
+      rerender(
+        view(snapshot({ searchText: "external", searchTextRequestID: "another-renderer:1" }))
+      );
+      expect(input).toHaveValue("external");
+      fireEvent.click(screen.getByRole("button", { name: "Clear Search" }));
+      expect(input).toHaveValue("");
+      expect(input).toHaveFocus();
+      expect(window.baseline.setSearchText).toHaveBeenLastCalledWith("", expect.any(String));
+    }
+  );
+
+  it("keeps an IME draft through external updates and submits only completed composition", () => {
+    const { rerender } = render(<SearchField snapshot={snapshot()} />);
+    const input = screen.getByPlaceholderText("Search");
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "に" } });
+    rerender(
+      <SearchField snapshot={snapshot({ searchText: "other", searchTextRequestID: "external" })} />
+    );
+    expect(input).toHaveValue("に");
+    expect(window.baseline.setSearchText).not.toHaveBeenCalled();
+    fireEvent.compositionEnd(input, { data: "日本", target: { value: "日本" } });
+    expect(input).toHaveValue("日本");
+    expect(window.baseline.setSearchText).toHaveBeenCalledExactlyOnceWith(
+      "日本",
+      expect.any(String)
+    );
+  });
+
+  it("retains a pending query when the palette is closed and reopened before an echo", () => {
+    render(<Dashboard compact={false} onOpenSettings={() => {}} snapshot={snapshot()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.change(screen.getByPlaceholderText("Search"), { target: { value: "draft" } });
+    fireEvent.keyDown(screen.getByPlaceholderText("Search"), { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(screen.getByPlaceholderText("Search")).toHaveValue("draft");
+  });
+
+  it.each([false, true])(
+    "keeps Report issue as the sole modal and restores focus (compact=%s)",
+    (compact) => {
+      render(
+        <Dashboard
+          compact={compact}
+          onOpenSettings={() => {}}
+          snapshot={snapshot({
+            operationFailures: [
+              {
+                id: "failure",
+                entityID: app.id,
+                operation: "update",
+                reason: "command",
+                status: 1,
+                occurredAt: "2026-11-06T12:00:00Z"
+              }
+            ]
+          })}
+        />
+      );
+      fireEvent.click(document.querySelector(".operation-failure summary")!);
+      const trigger = screen.getByRole("button", { name: "Report issue" });
+      trigger.focus();
+      fireEvent.click(trigger);
+      expect(document.querySelector(".action-surface")).toHaveAttribute("inert");
+      for (const key of ["f", "k"])
+        fireEvent.keyDown(document.activeElement!, { key, metaKey: true });
+      expect(document.querySelectorAll("[aria-modal=true]")).toHaveLength(1);
+      expect(screen.getByRole("dialog", { name: "Report issue" })).toBeInTheDocument();
+      const open = screen.getByRole("button", { name: "Open on GitHub" });
+      open.focus();
+      fireEvent.keyDown(open, { key: "Tab" });
+      expect(screen.getByLabelText("Report text")).toHaveFocus();
+      fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+      expect(trigger).toHaveFocus();
+      expect(document.querySelector(".action-surface")).not.toHaveAttribute("inert");
+    }
+  );
+
+  it("dismisses a report whose attempt disappears and recovers to an available control", () => {
+    const { rerender } = render(
+      <Dashboard
+        compact={false}
+        onOpenSettings={() => {}}
+        snapshot={snapshot({
+          operationFailures: [
+            {
+              id: "failure",
+              entityID: app.id,
+              operation: "update",
+              reason: "command",
+              status: 1,
+              occurredAt: "2026-11-06T12:00:00Z"
+            }
+          ]
+        })}
+      />
+    );
+    fireEvent.click(document.querySelector(".operation-failure summary")!);
+    fireEvent.click(screen.getByRole("button", { name: "Report issue" }));
+    rerender(<Dashboard compact={false} onOpenSettings={() => {}} snapshot={snapshot()} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Search" })).toHaveFocus();
+  });
+
+  it("preserves a newer dirty interval through an older acknowledgement and deduplicates Enter/blur", () => {
+    const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+    const input = screen.getByRole("textbox", { name: "Interval minutes" });
+    fireEvent.change(input, { target: { value: "30" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.change(input, { target: { value: "45" } });
+    rerender(<RefreshIntervalInput value={30} disabled={false} />);
+    expect(input).toHaveValue("45");
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.blur(input);
+    expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(2);
+    expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith(
+      {
+        refreshIntervalMinutes: 45
+      },
+      true
+    );
+    rerender(<RefreshIntervalInput value={45} disabled={false} />);
+    fireEvent.blur(input);
+    expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(2);
+    rerender(<RefreshIntervalInput value={90} disabled={false} />);
+    expect(input).toHaveValue("90");
+  });
+});
+
+it.each([false, true])(
+  "keeps a rejected interval retryable with a newer dirty edit (echoBeforeFailure=%s)",
+  async (echoBeforeFailure) => {
+    let reject!: (reason: Error) => void;
+    vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+      () =>
+        new Promise<void>((_, rejectPromise) => {
+          reject = rejectPromise;
+        })
+    );
+    const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+    const input = screen.getByRole("textbox", { name: "Interval minutes" });
+    fireEvent.change(input, { target: { value: "30" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    if (echoBeforeFailure) rerender(<RefreshIntervalInput value={30} disabled={false} />);
+    fireEvent.change(input, { target: { value: "45" } });
+    await act(async () => reject(new Error("Save failed")));
+    expect(input).toHaveValue("45");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not save interval");
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.blur(input);
+    expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(2);
+    expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith(
+      {
+        refreshIntervalMinutes: 45
+      },
+      true
+    );
+    await act(async () => {});
+    rerender(<RefreshIntervalInput value={90} disabled={false} />);
+    expect(input).toHaveValue("90");
+  }
+);
+
+it("retries a rejected interval even after its value was already echoed", async () => {
+  let reject!: (reason: Error) => void;
+  vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+    () =>
+      new Promise<void>((_, fail) => {
+        reject = fail;
+      })
+  );
+  const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+  const input = screen.getByRole("textbox", { name: "Interval minutes" });
+  fireEvent.change(input, { target: { value: "30" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  rerender(<RefreshIntervalInput value={30} disabled={false} />);
+  await act(async () => reject(new Error("Persistence failed")));
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.blur(input);
+  expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(2);
+  expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith(
+    {
+      refreshIntervalMinutes: 30
+    },
+    true
+  );
+});
+
+it("does not let an older interval failure replace a newer pending commit", async () => {
+  let reject!: (reason: Error) => void;
+  vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+    () =>
+      new Promise<void>((_, fail) => {
+        reject = fail;
+      })
+  );
+  const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+  const input = screen.getByRole("textbox", { name: "Interval minutes" });
+  fireEvent.change(input, { target: { value: "30" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.change(input, { target: { value: "45" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await act(async () => reject(new Error("Older save failed")));
+  rerender(<RefreshIntervalInput value={45} disabled={false} />);
+  expect(input).toHaveValue("45");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  fireEvent.blur(input);
+  expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(2);
+});
+
+it("owns rejected search requests and allows Enter to retry the same draft", async () => {
+  vi.mocked(window.baseline.setSearchText).mockRejectedValueOnce(new Error("IPC failed"));
+  const { rerender } = render(<SearchField snapshot={snapshot()} />);
+  const input = screen.getByPlaceholderText("Search");
+  fireEvent.change(input, { target: { value: "query" } });
+  await act(async () => {});
+  expect(input).toHaveValue("query");
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not update search");
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(window.baseline.setSearchText).toHaveBeenCalledTimes(2);
+  rerender(
+    <SearchField
+      snapshot={snapshot({
+        searchText: "query",
+        searchTextRequestID: vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1]
+      })}
+    />
+  );
+  rerender(
+    <SearchField
+      snapshot={snapshot({ searchText: "external", searchTextRequestID: "another-window" })}
+    />
+  );
+  expect(input).toHaveValue("external");
+});
+
+it("ignores search failures after an authoritative edit from another renderer", async () => {
+  let reject!: (reason: Error) => void;
+  vi.mocked(window.baseline.setSearchText).mockImplementationOnce(
+    () =>
+      new Promise<void>((_, fail) => {
+        reject = fail;
+      })
+  );
+  const { rerender } = render(<SearchField snapshot={snapshot()} />);
+  fireEvent.change(screen.getByPlaceholderText("Search"), { target: { value: "local" } });
+  rerender(
+    <SearchField snapshot={snapshot({ searchText: "external", searchTextRequestID: "other:1" })} />
+  );
+  await act(async () => reject(new Error("Old request failed")));
+  expect(screen.getByPlaceholderText("Search")).toHaveValue("external");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("finishes a composing query before closing the palette and can edit after reopening", () => {
+  render(<Dashboard compact={false} onOpenSettings={() => {}} snapshot={snapshot()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  const input = screen.getByPlaceholderText("Search");
+  fireEvent.compositionStart(input);
+  fireEvent.change(input, { target: { value: "日本" } });
+  fireEvent.mouseDown(document.querySelector(".search-palette-backdrop")!);
+  expect(window.baseline.setSearchText).toHaveBeenCalledWith("日本", expect.any(String));
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  fireEvent.change(screen.getByPlaceholderText("Search"), { target: { value: "日本語" } });
+  expect(window.baseline.setSearchText).toHaveBeenLastCalledWith("日本語", expect.any(String));
+});
+
+it.each([false, true])(
+  "preserves a newer local query while another renderer's older snapshot is delayed (compact=%s)",
+  (compact) => {
+    const view = (state: BaselineSnapshot) =>
+      compact ? (
+        <ToolbarSearch open snapshot={state} onToggle={() => {}} onClose={() => {}} />
+      ) : (
+        <SearchField snapshot={state} />
+      );
+    const { rerender } = render(view(snapshot({ snapshotRevision: 0 })));
+    const input = screen.getByPlaceholderText("Search") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "B" } });
+    const firstID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1];
+    rerender(
+      view(
+        snapshot({ searchText: "A", searchTextRequestID: "other-renderer:1", snapshotRevision: 1 })
+      )
+    );
+    expect(input).toHaveValue("B");
+    fireEvent.change(input, { target: { value: input.value + "C" } });
+    expect(window.baseline.setSearchText).toHaveBeenLastCalledWith("BC", expect.any(String));
+    const latestID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1];
+    rerender(
+      view(snapshot({ searchText: "B", searchTextRequestID: firstID, snapshotRevision: 2 }))
+    );
+    expect(input).toHaveValue("BC");
+    rerender(
+      view(snapshot({ searchText: "BC", searchTextRequestID: latestID, snapshotRevision: 3 }))
+    );
+    rerender(
+      view(
+        snapshot({ searchText: "D", searchTextRequestID: "other-renderer:2", snapshotRevision: 4 })
+      )
+    );
+    expect(input).toHaveValue("D");
+  }
+);
+
+it.each([true, false])(
+  "reconciles a coalesced later external edit using the invoke revision (responseFirst=%s)",
+  async (responseFirst) => {
+    let acknowledge!: (value: { requestID: string; snapshotRevision: number }) => void;
+    vi.mocked(window.baseline.setSearchText).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          acknowledge = resolve;
+        })
+    );
+    const { rerender } = render(<SearchField snapshot={snapshot({ snapshotRevision: 0 })} />);
+    const input = screen.getByPlaceholderText("Search");
+    fireEvent.change(input, { target: { value: "local" } });
+    const requestID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1]!;
+    if (responseFirst) await act(async () => acknowledge({ requestID, snapshotRevision: 2 }));
+    rerender(
+      <SearchField
+        snapshot={snapshot({
+          searchText: "older",
+          searchTextRequestID: "other:1",
+          snapshotRevision: 1
+        })}
+      />
+    );
+    expect(input).toHaveValue("local");
+    rerender(
+      <SearchField
+        snapshot={snapshot({
+          searchText: "newer",
+          searchTextRequestID: "other:2",
+          snapshotRevision: 3
+        })}
+      />
+    );
+    if (!responseFirst) {
+      expect(input).toHaveValue("local");
+      await act(async () => acknowledge({ requestID, snapshotRevision: 2 }));
+    }
+    expect(input).toHaveValue("newer");
+  }
+);
+
+it.each(["", "60"])(
+  "reconciles a dirty interval after external changes when committing %j",
+  (next) => {
+    const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+    const input = screen.getByRole("textbox", { name: "Interval minutes" });
+    fireEvent.change(input, { target: { value: "90" } });
+    rerender(<RefreshIntervalInput value={30} disabled={false} />);
+    expect(input).toHaveValue("90");
+    fireEvent.change(input, { target: { value: next } });
+    fireEvent.blur(input);
+    if (next) {
+      expect(input).toHaveValue("60");
+      expect(window.baseline.updatePreferences).toHaveBeenCalledExactlyOnceWith(
+        {
+          refreshIntervalMinutes: 60
+        },
+        true
+      );
+    } else {
+      expect(input).toHaveValue("30");
+      expect(window.baseline.updatePreferences).not.toHaveBeenCalled();
+    }
+  }
+);
+
+it.each([false, true])(
+  "retains a failed search draft and retry error through unrelated snapshot revisions (echoBeforeFailure=%s)",
+  async (echoBeforeFailure) => {
+    let reject!: (reason: Error) => void;
+    vi.mocked(window.baseline.setSearchText).mockImplementationOnce(
+      () =>
+        new Promise<void>((_, fail) => {
+          reject = fail;
+        })
+    );
+    const { rerender } = render(<SearchField snapshot={snapshot({ snapshotRevision: 0 })} />);
+    const input = screen.getByPlaceholderText("Search");
+    fireEvent.change(input, { target: { value: "draft" } });
+    const firstID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1];
+    const authoritative = echoBeforeFailure
+      ? { searchText: "draft", searchTextRequestID: firstID }
+      : { searchText: "" };
+    if (echoBeforeFailure)
+      rerender(<SearchField snapshot={snapshot({ ...authoritative, snapshotRevision: 1 })} />);
+    await act(async () => reject(new Error("Request failed")));
+    rerender(
+      <SearchField
+        snapshot={snapshot({ ...authoritative, snapshotRevision: 2, isRefreshing: true })}
+      />
+    );
+    expect(input).toHaveValue("draft");
+    expect(screen.getByRole("alert")).toHaveTextContent("Could not update search");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(window.baseline.setSearchText).toHaveBeenCalledTimes(2);
+    const retryID = vi.mocked(window.baseline.setSearchText).mock.calls.at(-1)![1];
+    expect(retryID).not.toBe(firstID);
+    rerender(
+      <SearchField
+        snapshot={snapshot({
+          searchText: "draft",
+          searchTextRequestID: retryID,
+          snapshotRevision: 3
+        })}
+      />
+    );
+    expect(input).toHaveValue("draft");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  }
+);
+
+it("reconciles a coalesced external interval after its own pending save completes", async () => {
+  let resolveSave!: (value: { snapshotRevision: number }) => void;
+  vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+    () =>
+      new Promise<{ snapshotRevision: number }>((resolve) => {
+        resolveSave = resolve;
+      })
+  );
+  const { rerender } = render(
+    <RefreshIntervalInput value={60} disabled={false} snapshotRevision={0} />
+  );
+  const input = screen.getByRole("textbox", { name: "Interval minutes" });
+  fireEvent.change(input, { target: { value: "30" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  rerender(<RefreshIntervalInput value={90} disabled={false} snapshotRevision={2} />);
+  await act(async () => resolveSave({ snapshotRevision: 1 }));
+  expect(input).toHaveValue("90");
+});
+
+it("keeps a newer dirty interval when an older save settles after an external edit", async () => {
+  let resolveSave!: (value: { snapshotRevision: number }) => void;
+  vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+    () =>
+      new Promise<{ snapshotRevision: number }>((resolve) => {
+        resolveSave = resolve;
+      })
+  );
+  const { rerender } = render(
+    <RefreshIntervalInput value={60} disabled={false} snapshotRevision={0} />
+  );
+  const input = screen.getByRole("textbox", { name: "Interval minutes" });
+  fireEvent.change(input, { target: { value: "30" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.change(input, { target: { value: "45" } });
+  rerender(<RefreshIntervalInput value={90} disabled={false} snapshotRevision={2} />);
+  await act(async () => resolveSave({ snapshotRevision: 1 }));
+  expect(input).toHaveValue("45");
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith(
+    {
+      refreshIntervalMinutes: 45
+    },
+    true
+  );
+});
+
+it("keeps a submitted interval when save completion precedes its first snapshot echo", async () => {
+  let resolveSave!: (value: { snapshotRevision: number }) => void;
+  vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+    () =>
+      new Promise<{ snapshotRevision: number }>((resolve) => {
+        resolveSave = resolve;
+      })
+  );
+  const { rerender } = render(
+    <RefreshIntervalInput value={60} disabled={false} snapshotRevision={0} />
+  );
+  const input = screen.getByRole("textbox", { name: "Interval minutes" });
+  fireEvent.change(input, { target: { value: "30" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await act(async () => resolveSave({ snapshotRevision: 1 }));
+  expect(input).toHaveValue("30");
+  rerender(<RefreshIntervalInput value={30} disabled={false} snapshotRevision={1} />);
+  expect(input).toHaveValue("30");
+});
+
+it.each([true, false])(
+  "reconciles a coalesced reset to the original interval (responseFirst=%s)",
+  async (responseFirst) => {
+    let acknowledge!: (value: { snapshotRevision: number }) => void;
+    vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          acknowledge = resolve;
+        })
+    );
+    const view = (revision: number) => (
+      <RefreshIntervalInput value={60} disabled={false} snapshotRevision={revision} />
+    );
+    const { rerender } = render(view(0));
+    const input = screen.getByRole("textbox", { name: "Interval minutes" });
+    fireEvent.change(input, { target: { value: "30" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    if (responseFirst) {
+      await act(async () => acknowledge({ snapshotRevision: 1 }));
+      expect(input).toHaveValue("30");
+    }
+    rerender(view(2));
+    if (!responseFirst) await act(async () => acknowledge({ snapshotRevision: 1 }));
+    expect(input).toHaveValue("60");
+    fireEvent.blur(input);
+    expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(1);
   }
 );
