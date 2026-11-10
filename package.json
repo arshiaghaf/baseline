@@ -68,7 +68,7 @@
     "@vitejs/plugin-react": "^6.1.2",
     "@vitest/ui": "^5.0.5",
     "autoprefixer": "^10.6.2",
-    "electron": "^44.9.2",
+    "electron": "^45.2.3",
     "electron-installer-dmg": "^5.0.1",
     "eslint": "^10.13.0",
     "image-size": "file:build-support/image-size-compat",
