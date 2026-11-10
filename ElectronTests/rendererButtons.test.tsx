@@ -5558,3 +5558,60 @@ it.each([false, true])(
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   }
 );
+
+it("reconciles a coalesced external interval after its own pending save completes", async () => {
+  let resolveSave!: () => void;
+  vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        resolveSave = resolve;
+      })
+  );
+  const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+  const input = screen.getByRole("textbox", { name: "Interval minutes" });
+  fireEvent.change(input, { target: { value: "30" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  rerender(<RefreshIntervalInput value={90} disabled={false} />);
+  await act(async () => resolveSave());
+  expect(input).toHaveValue("90");
+});
+
+it("keeps a newer dirty interval when an older save settles after an external edit", async () => {
+  let resolveSave!: () => void;
+  vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        resolveSave = resolve;
+      })
+  );
+  const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+  const input = screen.getByRole("textbox", { name: "Interval minutes" });
+  fireEvent.change(input, { target: { value: "30" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.change(input, { target: { value: "45" } });
+  rerender(<RefreshIntervalInput value={90} disabled={false} />);
+  await act(async () => resolveSave());
+  expect(input).toHaveValue("45");
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith({
+    refreshIntervalMinutes: 45
+  });
+});
+
+it("keeps a submitted interval when save completion precedes its first snapshot echo", async () => {
+  let resolveSave!: () => void;
+  vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        resolveSave = resolve;
+      })
+  );
+  const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+  const input = screen.getByRole("textbox", { name: "Interval minutes" });
+  fireEvent.change(input, { target: { value: "30" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await act(async () => resolveSave());
+  expect(input).toHaveValue("30");
+  rerender(<RefreshIntervalInput value={30} disabled={false} />);
+  expect(input).toHaveValue("30");
+});

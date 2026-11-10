@@ -686,6 +686,8 @@ export function AppearanceSelector({ value }: { value: AppearancePreference }) {
 export function RefreshIntervalInput({ value, disabled }: { value: number; disabled: boolean }) {
   const [draft, setDraft] = useState(String(value));
   const dirtyRef = useRef(false);
+  const latestValueRef = useRef(value);
+  latestValueRef.current = value;
   const pendingRef = useRef<{ id: number; value: string }[]>([]);
   const submissionRef = useRef(0);
   const committedRef = useRef<string | undefined>(String(value));
@@ -716,12 +718,25 @@ export function RefreshIntervalInput({ value, disabled }: { value: number; disab
     setDraft(normalizedDraft);
     if (committedRef.current !== undefined && intendedValue === normalizedDraft) return;
     committedRef.current = normalizedDraft;
+    const submittedFromValue = value;
     const id = ++submissionRef.current;
     pendingRef.current.push({ id, value: normalizedDraft });
     setSaveError(false);
     void Promise.resolve(baseline.updatePreferences({ refreshIntervalMinutes })).then(
       () => {
         pendingRef.current = pendingRef.current.filter((pending) => pending.id !== id);
+        // React can coalesce our acknowledgement with a later external edit.
+        // Reconcile that observed change once saves settle, but retain a newer
+        // dirty draft and do not roll back while waiting for the first echo.
+        if (
+          !dirtyRef.current &&
+          !pendingRef.current.length &&
+          latestValueRef.current !== submittedFromValue
+        ) {
+          const latest = String(latestValueRef.current);
+          committedRef.current = latest;
+          setDraft(latest);
+        }
       },
       () => {
         pendingRef.current = pendingRef.current.filter((pending) => pending.id !== id);
