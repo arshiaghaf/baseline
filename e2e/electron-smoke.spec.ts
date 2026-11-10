@@ -100,6 +100,7 @@ const expectedBaselineAPI = [
   "setSelectedTab",
   "showMainWindow",
   "showSettings",
+  "toggleCollapsedSection",
   "toggleIgnoredApp",
   "toggleIgnoredHomebrew",
   "uninstallHomebrewItem",

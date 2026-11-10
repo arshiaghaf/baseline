@@ -376,6 +376,7 @@ export function SettingsPane({
               />
               <RefreshIntervalInput
                 value={snapshot.refreshIntervalMinutes}
+                snapshotRevision={snapshot.snapshotRevision}
                 disabled={!snapshot.autoRefreshEnabled}
               />
             </div>
@@ -725,31 +726,82 @@ export function AppearanceSelector({ value }: { value: AppearancePreference }) {
   );
 }
 
-export function RefreshIntervalInput({ value, disabled }: { value: number; disabled: boolean }) {
+export function RefreshIntervalInput({
+  value,
+  disabled,
+  snapshotRevision
+}: {
+  value: number;
+  disabled: boolean;
+  snapshotRevision?: number;
+}) {
   const [draft, setDraft] = useState(String(value));
-  const lastCommittedDraftRef = useRef<string | undefined>(undefined);
+  const dirtyRef = useRef(false);
+  const latestSnapshotRef = useRef({ value, snapshotRevision });
+  latestSnapshotRef.current = { value, snapshotRevision };
+  const pendingRef = useRef<{ id: number; value: string; snapshotRevision?: number }[]>([]);
+  const submissionRef = useRef(0);
+  const committedRef = useRef<string | undefined>(String(value));
+  const [saveError, setSaveError] = useState(false);
 
-  useEffect(() => {
-    const nextDraft = String(value);
-    setDraft(nextDraft);
-    if (lastCommittedDraftRef.current !== nextDraft) {
-      lastCommittedDraftRef.current = undefined;
+  const synchronize = () => {
+    const incoming = latestSnapshotRef.current;
+    const next = String(incoming.value);
+    if (incoming.snapshotRevision !== undefined) {
+      pendingRef.current = pendingRef.current.filter(
+        (pending) =>
+          pending.snapshotRevision === undefined ||
+          incoming.snapshotRevision! < pending.snapshotRevision
+      );
+    } else {
+      // Support callers without revision metadata; production supplies revisions.
+      const acknowledgement = pendingRef.current.map((pending) => pending.value).lastIndexOf(next);
+      if (acknowledgement >= 0) pendingRef.current.splice(0, acknowledgement + 1);
     }
-  }, [value]);
+    if (dirtyRef.current || pendingRef.current.length) return;
+    committedRef.current = next;
+    setDraft(next);
+  };
+  useEffect(synchronize, [value, snapshotRevision]);
 
   const commitDraft = () => {
+    if (!dirtyRef.current) return;
+    dirtyRef.current = false;
+    const intendedValue = pendingRef.current.at(-1)?.value ?? String(value);
     if (!draft) {
-      setDraft(String(value));
+      setDraft(intendedValue);
+      committedRef.current = intendedValue;
+      setSaveError(false);
       return;
     }
     const refreshIntervalMinutes = clampRefreshIntervalMinutes(Number.parseInt(draft, 10));
     const normalizedDraft = String(refreshIntervalMinutes);
     setDraft(normalizedDraft);
-    if (lastCommittedDraftRef.current === normalizedDraft) {
-      return;
-    }
-    lastCommittedDraftRef.current = normalizedDraft;
-    void baseline.updatePreferences({ refreshIntervalMinutes });
+    if (committedRef.current !== undefined && intendedValue === normalizedDraft) return;
+    committedRef.current = normalizedDraft;
+    const id = ++submissionRef.current;
+    pendingRef.current.push({ id, value: normalizedDraft });
+    setSaveError(false);
+    void Promise.resolve(baseline.updatePreferences({ refreshIntervalMinutes }, true)).then(
+      (acknowledgement) => {
+        const pending = pendingRef.current.find((pending) => pending.id === id);
+        if (acknowledgement && pending) {
+          pending.snapshotRevision = acknowledgement.snapshotRevision;
+          synchronize();
+        } else if (!acknowledgement) {
+          pendingRef.current = pendingRef.current.filter((pending) => pending.id !== id);
+        }
+      },
+      () => {
+        pendingRef.current = pendingRef.current.filter((pending) => pending.id !== id);
+        if (submissionRef.current !== id) return;
+        // A snapshot may precede a failed durable save. Keep this draft retryable,
+        // including when the user has already started a newer unsubmitted edit.
+        committedRef.current = undefined;
+        dirtyRef.current = true;
+        setSaveError(true);
+      }
+    );
   };
 
   return (
@@ -777,7 +829,8 @@ export function RefreshIntervalInput({ value, disabled }: { value: number; disab
           if (!/^\d*$/u.test(nextValue)) {
             return;
           }
-          lastCommittedDraftRef.current = undefined;
+          dirtyRef.current = true;
+          setSaveError(false);
           setDraft(nextValue);
         }}
         onBlur={commitDraft}
@@ -787,6 +840,7 @@ export function RefreshIntervalInput({ value, disabled }: { value: number; disab
           }
         }}
       />
+      {saveError && <span role="alert">Could not save interval. Press Enter to try again.</span>}
     </label>
   );
 }

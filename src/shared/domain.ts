@@ -356,6 +356,8 @@ export type BaselineSnapshot = PersistedSnapshot &
     homebrewOperation?: HomebrewRuntimeOperation;
     snapshotRevision?: number;
     searchText: string;
+    /** Runtime-only acknowledgement of the renderer search edit that produced this query. */
+    searchTextRequestID?: string;
     isRunningHomebrewMaintenance: boolean;
     isHomebrewCommandLocked: boolean;
     isHomebrewCleanupLocked: boolean;

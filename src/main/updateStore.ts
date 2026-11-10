@@ -25,7 +25,7 @@ import type {
 import { emptyHomebrewCaskIndex, normalizeAppearancePreference } from "../shared/domain";
 import type { HomebrewMaintenanceRunEvent } from "../shared/homebrewProgress";
 import { homebrewCommandToken, installedCaskEntry } from "../shared/homebrewIdentity";
-import type { PreferencePatch } from "../shared/ipc";
+import type { PreferencePatch, SearchEditAcknowledgement } from "../shared/ipc";
 import { validatedPreferencePatch } from "./preferenceValidation";
 import { isAllowedExternalURL, isValidHomebrewToken } from "../shared/security";
 import {
@@ -623,10 +623,20 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     await this.trackProducer(this.toolStatus.check());
   }
 
-  async setSearchText(searchText: string): Promise<void> {
+  async setSearchText(
+    searchText: string,
+    requestID?: string
+  ): Promise<SearchEditAcknowledgement | void> {
     this.requireOpen();
-    this.patch({ searchText });
+    this.patch({
+      searchText,
+      searchTextRequestID:
+        requestID ??
+        (searchText === this.state.searchText ? this.state.searchTextRequestID : randomUUID())
+    });
+    const snapshotRevision = this.snapshotRevision;
     this.refreshComputation.refreshDiscoverItems();
+    if (requestID) return { requestID, snapshotRevision };
   }
 
   async setSelectedTab(selectedTab: MenuTab): Promise<void> {
@@ -634,7 +644,29 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     this.patch({ selectedTab });
   }
 
-  async updatePreferences(patch: PreferencePatch): Promise<void> {
+  async toggleCollapsedSection(kind: "app" | "homebrew", sectionID: string): Promise<void> {
+    this.requireOpen();
+    if (
+      (kind !== "app" && kind !== "homebrew") ||
+      typeof sectionID !== "string" ||
+      !sectionID ||
+      sectionID.length > 256
+    ) {
+      throw new Error("Invalid section toggle");
+    }
+    const key = kind === "app" ? "collapsedAppSectionIDs" : "collapsedHomebrewSectionIDs";
+    const values = new Set(this.state[key]);
+    if (values.has(sectionID)) values.delete(sectionID);
+    else values.add(sectionID);
+    // Apply before awaiting persistence so independent windows compose against current state.
+    this.patch({ [key]: [...values].sort() });
+    await this.persist();
+  }
+
+  async updatePreferences(
+    patch: PreferencePatch,
+    acknowledge = false
+  ): Promise<{ snapshotRevision: number } | void> {
     this.requireOpen();
     patch = validatedPreferencePatch(patch);
     const refreshIntervalMinutes =
@@ -654,8 +686,10 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         this.state.autoRefreshEnabled ||
       refreshIntervalMinutes !== this.state.refreshIntervalMinutes;
     this.patch({ ...patch, ...visibility, appearancePreference, refreshIntervalMinutes });
+    const snapshotRevision = this.snapshotRevision;
     if (scheduleChanged) this.restartAutoRefreshLoop();
     await this.persist();
+    if (acknowledge) return { snapshotRevision };
   }
 
   async checkForSelfUpdate(): Promise<SelfUpdateRecord | undefined> {

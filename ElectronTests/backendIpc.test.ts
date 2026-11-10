@@ -33,9 +33,10 @@ const validArguments = {
   refreshToolStatus: [],
   cleanUpHomebrew: [],
   refresh: [false, true],
-  setSearchText: [""],
+  setSearchText: ["", "renderer:1"],
+  toggleCollapsedSection: ["app", "installed"],
   setSelectedTab: ["apps"],
-  updatePreferences: [{ autoRefreshEnabled: false }],
+  updatePreferences: [{ autoRefreshEnabled: false }, true],
   acknowledgeProfileStatsReset: [],
   dismissOperationFailure: ["failure"],
   toggleIgnoredApp: ["app"],
@@ -363,3 +364,30 @@ it.each(["settings", "menubar"])(
     expect(caller.webContents.mainFrame.url).toBe(`file:///fixture/index.html#/${route}`);
   }
 );
+
+it.each(["", "x".repeat(257), "renderer\n1", 42])(
+  "rejects malformed search edit acknowledgement IDs (%s)",
+  async (requestID) => {
+    const handler = handlers.get(ipcChannels.setSearchText)!;
+    const event = {
+      sender: windows[0]!.webContents,
+      senderFrame: windows[0]!.webContents.mainFrame
+    } as unknown as IpcMainInvokeEvent;
+    await expect(
+      Promise.resolve().then(() => handler(event, "query", requestID))
+    ).rejects.toThrow();
+    expect(store.setSearchText).not.toHaveBeenCalled();
+  }
+);
+
+it.each(["yes", 1, {}])("rejects malformed preference acknowledgement flags (%j)", async (flag) => {
+  const handler = handlers.get(ipcChannels.updatePreferences)!;
+  const event = {
+    sender: windows[0]!.webContents,
+    senderFrame: windows[0]!.webContents.mainFrame
+  } as unknown as IpcMainInvokeEvent;
+  await expect(
+    Promise.resolve().then(() => handler(event, { refreshIntervalMinutes: 30 }, flag))
+  ).rejects.toThrow();
+  expect(store.updatePreferences).not.toHaveBeenCalled();
+});
