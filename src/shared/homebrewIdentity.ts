@@ -28,6 +28,7 @@ export function homebrewCommandToken(item: HomebrewManagedItem): string | undefi
       return undefined;
     return fullName;
   }
+  if (item.caskMembershipVerified === false) return undefined;
   const full = item.fullToken;
   const tap = item.tap;
   if (!full || !tap || !isValidHomebrewToken(full)) return undefined;

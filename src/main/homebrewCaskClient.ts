@@ -5,8 +5,7 @@ import type {
   HomebrewCaskDiscoveryItem,
   HomebrewCaskEntry,
   HomebrewCaskIndex,
-  HomebrewLookupResult,
-  HomebrewPresentation
+  HomebrewLookupResult
 } from "../shared/domain";
 import { emptyHomebrewCaskIndex, homebrewDiscoverID } from "../shared/domain";
 import { byteLimits, isValidHomebrewToken, sanitizeExternalURL } from "../shared/security";
@@ -185,9 +184,7 @@ export class HomebrewCaskClient {
         tap: typeof item.tap === "string" ? item.tap : "homebrew/cask",
         version: version(comparableVersion(item?.version)),
         homepageURL: sanitizeExternalURL(item?.homepage),
-        presentation: classifyCaskPresentation(item),
-        ...extractBundleIdentifierMetadata(item),
-        appBundleNames: extractAppBundleNames(item),
+        ...extractCaskMetadata(item),
         ...extractInstalledAppPaths(item)
       };
       byToken[token.toLowerCase()] = entry;
@@ -227,11 +224,21 @@ export class HomebrewCaskClient {
   }
 }
 
-function extractBundleIdentifierMetadata(
+/** The bounded evidence walk is shared by classification, identity and name extraction. */
+function extractCaskMetadata(
   object: any
-): Pick<HomebrewCaskEntry, "bundleIdentifiers" | "inferredBundleIdentifiers"> {
+): Pick<
+  HomebrewCaskEntry,
+  "presentation" | "bundleIdentifiers" | "inferredBundleIdentifiers" | "appBundleNames"
+> {
   const explicit = new Set<string>();
   const quit = new Set<string>();
+  const names = new Set<string>();
+  let appArtifact = false;
+  let loginItem = false;
+  let deletedApp = false;
+  let targetApp = false;
+  let targetArtifact = false;
   walk(object, (key, value) => {
     if (
       key === "bundle_id" ||
@@ -239,26 +246,48 @@ function extractBundleIdentifierMetadata(
       key === "bundle_identifier" ||
       key === "bundleIdentifier"
     ) {
-      if (typeof value === "string") {
-        explicit.add(value);
-      } else if (Array.isArray(value)) {
-        stringValues(value).forEach((entry) => explicit.add(entry));
-      }
+      stringValues(value).forEach((entry) => explicit.add(entry));
     } else if (key === "quit") {
-      if (typeof value === "string") {
-        quit.add(value);
-      } else if (Array.isArray(value)) {
-        stringValues(value).forEach((entry) => quit.add(entry));
+      stringValues(value).forEach((entry) => quit.add(entry));
+    } else if (key === "app" || key === "apps" || key === "login_item") {
+      for (const entry of stringValues(value)) {
+        const name = normalizeAppBundleName(entry);
+        if (!name) continue;
+        names.add(name);
+        if (key === "login_item") loginItem = true;
+        else appArtifact = true;
+      }
+    } else if (key === "target" || key === "delete") {
+      for (const entry of stringValues(value)) {
+        const name = normalizeAppBundleName(entry);
+        if (!name) continue;
+        if (key === "target") targetArtifact = true;
+        if (!entry.trim().toLowerCase().endsWith(".app")) continue;
+        names.add(name);
+        if (key === "target") targetApp = true;
+        else deletedApp = true;
       }
     }
   });
-  if (explicit.size > 0 || hasExplicitAppArtifactName(object)) {
-    return { bundleIdentifiers: [...explicit].sort() };
-  }
-  if (isPackageBackedAppCandidate(object)) {
-    return { bundleIdentifiers: [], inferredBundleIdentifiers: [...quit].sort() };
-  }
-  return { bundleIdentifiers: [] };
+  const packageArtifact = hasArtifactKey(object, "pkg");
+  const appEvidence = appArtifact || loginItem || deletedApp || targetApp;
+  const inferred =
+    explicit.size === 0 &&
+    !appArtifact &&
+    packageArtifact &&
+    (loginItem || deletedApp || !targetArtifact);
+  return {
+    presentation: appEvidence
+      ? "app"
+      : hasCliArtifactEvidence(object)
+        ? "cli"
+        : packageArtifact
+          ? "package"
+          : "cask",
+    bundleIdentifiers: [...explicit].sort(),
+    ...(inferred ? { inferredBundleIdentifiers: [...quit].sort() } : {}),
+    appBundleNames: [...names].sort()
+  };
 }
 
 function indexBundleIdentifier(
@@ -294,31 +323,6 @@ function extractInstalledAppPaths(object: any): Pick<HomebrewCaskEntry, "install
     });
   }
   return paths.size ? { installedAppPaths: [...paths].sort() } : {};
-}
-
-function extractAppBundleNames(object: any): string[] {
-  const found = new Set<string>();
-  const addNormalized = (value: string, options: { requireAppSuffix?: boolean } = {}) => {
-    if (options.requireAppSuffix && !value.trim().toLowerCase().endsWith(".app")) {
-      return;
-    }
-    const normalized = normalizeAppBundleName(value);
-    if (normalized) found.add(normalized);
-  };
-  walk(object, (key, value) => {
-    if (["app", "apps", "login_item"].includes(key)) {
-      if (typeof value === "string") {
-        addNormalized(value);
-      } else if (Array.isArray(value)) {
-        stringValues(value).forEach((entry) => addNormalized(entry));
-      }
-    } else if (key === "target") {
-      stringValues(value).forEach((entry) => addNormalized(entry, { requireAppSuffix: true }));
-    } else if (key === "delete") {
-      stringValues(value).forEach((entry) => addNormalized(entry, { requireAppSuffix: true }));
-    }
-  });
-  return [...found].sort();
 }
 
 const evidenceKeys = [
@@ -392,79 +396,6 @@ function walk(value: any, visitor: (key: string, value: any) => void): void {
   }
 }
 
-function hasExplicitAppArtifactName(object: any): boolean {
-  let found = false;
-  walk(object, (key, value) => {
-    if (found || !["app", "apps"].includes(key)) {
-      return;
-    }
-    if (typeof value === "string") {
-      found = normalizeAppBundleName(value) !== undefined;
-    } else if (Array.isArray(value)) {
-      found = stringValues(value).some((entry) => normalizeAppBundleName(entry));
-    }
-  });
-  return found;
-}
-
-function hasPackageBackedAppNameHint(object: any): boolean {
-  let found = false;
-  walk(object, (key, value) => {
-    if (found || key !== "login_item") {
-      return;
-    }
-    if (typeof value === "string") {
-      found = normalizeAppBundleName(value) !== undefined;
-    } else if (Array.isArray(value)) {
-      found = stringValues(value).some((entry) => normalizeAppBundleName(entry));
-    }
-  });
-  return found;
-}
-
-function isPackageBackedAppCandidate(object: any): boolean {
-  if (!hasArtifactKey(object, "pkg") || hasExplicitAppArtifactName(object)) {
-    return false;
-  }
-  if (hasPackageBackedAppNameHint(object) || hasDeletedAppPathHint(object)) {
-    return true;
-  }
-  return !hasTargetArtifactName(object);
-}
-
-function classifyCaskPresentation(object: any): HomebrewPresentation {
-  if (hasAppArtifactEvidence(object)) {
-    return "app";
-  }
-  if (hasCliArtifactEvidence(object)) {
-    return "cli";
-  }
-  if (hasArtifactKey(object, "pkg")) {
-    return "package";
-  }
-  return "cask";
-}
-
-function hasAppArtifactEvidence(object: any): boolean {
-  return (
-    hasExplicitAppArtifactName(object) ||
-    hasPackageBackedAppNameHint(object) ||
-    hasDeletedAppPathHint(object) ||
-    hasTargetAppPathHint(object)
-  );
-}
-
-function hasTargetAppPathHint(object: any): boolean {
-  let found = false;
-  walk(object, (key, value) => {
-    if (found || key !== "target") {
-      return;
-    }
-    found = stringValues(value).some((entry) => entry.trim().toLowerCase().endsWith(".app"));
-  });
-  return found;
-}
-
 function hasCliArtifactEvidence(object: any): boolean {
   const cliArtifactKeys = [
     "binary",
@@ -475,28 +406,6 @@ function hasCliArtifactEvidence(object: any): boolean {
     "generate_completions_from_executable"
   ];
   return cliArtifactKeys.some((artifactKey) => hasArtifactKey(object, artifactKey));
-}
-
-function hasDeletedAppPathHint(object: any): boolean {
-  let found = false;
-  walk(object, (key, value) => {
-    if (found || key !== "delete") {
-      return;
-    }
-    found = stringValues(value).some((entry) => entry.trim().toLowerCase().endsWith(".app"));
-  });
-  return found;
-}
-
-function hasTargetArtifactName(object: any): boolean {
-  let found = false;
-  walk(object, (key, value) => {
-    if (found || key !== "target") {
-      return;
-    }
-    found = stringValues(value).some((entry) => normalizeAppBundleName(entry));
-  });
-  return found;
 }
 
 function hasArtifactKey(object: any, artifactKey: string): boolean {

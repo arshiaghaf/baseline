@@ -234,6 +234,8 @@ export type HomebrewManagedItem = {
   fullToken?: string;
   tap?: string;
   caskMetadata?: HomebrewCaskEntry;
+  /** False retains cached cask evidence without current installed-membership authority. */
+  caskMembershipVerified?: boolean;
   // Installed formula metadata proves canonical names and historical rack aliases.
   formulaIdentity?: { name: string; fullName: string; tap: string; oldNames: string[] };
   // False retains identity for saved-ID continuity only, never command authorization.
@@ -283,6 +285,7 @@ export type PersistedSnapshot = {
   selectedTab: MenuTab;
   collapsedAppSectionIDs: string[];
   collapsedHomebrewSectionIDs: string[];
+  welcomeDismissed?: boolean;
   updateIntroductionDismissed?: boolean;
   autoRefreshEnabled: boolean;
   refreshIntervalMinutes: number;
@@ -355,6 +358,8 @@ export type BaselineSnapshot = PersistedSnapshot &
     homebrewOperation?: HomebrewRuntimeOperation;
     snapshotRevision?: number;
     searchText: string;
+    /** Runtime-only acknowledgement of the renderer search edit that produced this query. */
+    searchTextRequestID?: string;
     isRunningHomebrewMaintenance: boolean;
     isHomebrewCommandLocked: boolean;
     isHomebrewCleanupLocked: boolean;
@@ -442,6 +447,7 @@ export function defaultPersistedSnapshot(now = new Date().toISOString()): Persis
     selectedTab: "all",
     collapsedAppSectionIDs: [],
     collapsedHomebrewSectionIDs: [],
+    welcomeDismissed: false,
     autoRefreshEnabled: true,
     refreshIntervalMinutes: 60,
     appearancePreference: "system",

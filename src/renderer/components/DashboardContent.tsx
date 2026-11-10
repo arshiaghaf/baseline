@@ -306,7 +306,7 @@ export function AllRecentlyUpdatedSection({
         title="Recently Updated"
         collapsed={collapsed}
         canCollapse
-        onToggleCollapse={() => toggleCollapsedSection("app", "recentlyUpdated", snapshot)}
+        onToggleCollapse={() => toggleCollapsedSection("app", "recentlyUpdated")}
       />
       {!collapsed &&
         (rows.length === 0 ? (
@@ -379,7 +379,7 @@ export function AppSection({
         title={title}
         collapsed={collapsed}
         canCollapse={collapsible}
-        onToggleCollapse={() => toggleCollapsedSection("app", sectionID, snapshot)}
+        onToggleCollapse={() => toggleCollapsedSection("app", sectionID)}
       />
       {!collapsed &&
         (apps.length === 0 ? (
@@ -433,7 +433,7 @@ export function RecentlyUpdatedAppSection({
         title={title}
         collapsed={collapsed}
         canCollapse
-        onToggleCollapse={() => toggleCollapsedSection("app", sectionID, snapshot)}
+        onToggleCollapse={() => toggleCollapsedSection("app", sectionID)}
       />
       {!collapsed &&
         (items.length === 0 ? (
@@ -466,7 +466,7 @@ export function IgnoredAppSection({
         title={title}
         collapsed={collapsed}
         canCollapse
-        onToggleCollapse={() => toggleCollapsedSection("app", sectionID, snapshot)}
+        onToggleCollapse={() => toggleCollapsedSection("app", sectionID)}
       />
       {!collapsed &&
         (apps.length === 0 ? (
@@ -716,7 +716,7 @@ export function HomebrewSection({
         title={title}
         collapsed={collapsed}
         canCollapse={collapsible}
-        onToggleCollapse={() => toggleCollapsedSection("homebrew", sectionID, snapshot)}
+        onToggleCollapse={() => toggleCollapsedSection("homebrew", sectionID)}
         action={
           showUpdateAll && items.length > 1 ? (
             <UpdateActionButton
@@ -786,7 +786,7 @@ export function RecentlyUpdatedHomebrewSection({
         title={title}
         collapsed={collapsed}
         canCollapse
-        onToggleCollapse={() => toggleCollapsedSection("homebrew", sectionID, snapshot)}
+        onToggleCollapse={() => toggleCollapsedSection("homebrew", sectionID)}
       />
       {!collapsed &&
         (gridItems.length === 0 ? (
@@ -819,7 +819,7 @@ export function IgnoredHomebrewSection({
         title={title}
         collapsed={collapsed}
         canCollapse
-        onToggleCollapse={() => toggleCollapsedSection("homebrew", sectionID, snapshot)}
+        onToggleCollapse={() => toggleCollapsedSection("homebrew", sectionID)}
       />
       {!collapsed &&
         (items.length === 0 ? (

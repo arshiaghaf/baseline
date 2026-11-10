@@ -41,20 +41,22 @@ if [[ "$release_name" != "Baseline ${VERSION}" ]]; then
   exit 1
 fi
 
+# Avoid early-exit pipeline consumers under pipefail: SIGPIPE from printf can
+# turn a found match into a failure, including a forbidden-section false negative.
 for asset in "$DMG_ASSET" "$CHECKSUM_ASSET"; do
-  if ! printf "%s\n" "$assets" | grep -Fxq "$asset"; then
+  if ! grep -Fx -- "$asset" <<< "$assets" >/dev/null; then
     echo "Release $TAG is missing asset: $asset"
     exit 1
   fi
 done
 
-if ! printf "%s" "$body" | grep -Eq '^### (Added|Fixed)$'; then
-  echo "Release notes must contain an Added and/or Fixed section."
+if ! grep -E '^### (Highlights|Added|Fixed)$' <<< "$body" >/dev/null; then
+  echo "Release notes must contain a Highlights, Added, or Fixed section."
   exit 1
 fi
 
 for forbidden in "# Baseline" "## What's Changed" "## Download" "## SHA-256" "## Install" "## Build Note"; do
-  if printf "%s" "$body" | grep -Fq "$forbidden"; then
+  if grep -F -- "$forbidden" <<< "$body" >/dev/null; then
     echo "Release notes contain unexpected section: $forbidden"
     exit 1
   fi
