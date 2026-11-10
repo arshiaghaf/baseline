@@ -656,7 +656,10 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     await this.persist();
   }
 
-  async updatePreferences(patch: PreferencePatch): Promise<void> {
+  async updatePreferences(
+    patch: PreferencePatch,
+    acknowledge = false
+  ): Promise<{ snapshotRevision: number } | void> {
     this.requireOpen();
     patch = validatedPreferencePatch(patch);
     const refreshIntervalMinutes =
@@ -676,8 +679,10 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         this.state.autoRefreshEnabled ||
       refreshIntervalMinutes !== this.state.refreshIntervalMinutes;
     this.patch({ ...patch, ...visibility, appearancePreference, refreshIntervalMinutes });
+    const snapshotRevision = this.snapshotRevision;
     if (scheduleChanged) this.restartAutoRefreshLoop();
     await this.persist();
+    if (acknowledge) return { snapshotRevision };
   }
 
   async checkForSelfUpdate(): Promise<SelfUpdateRecord | undefined> {

@@ -170,7 +170,7 @@ async function start(): Promise<void> {
             nativeTheme.themeSource = patch.appearancePreference as "system" | "light" | "dark";
           snapshot = previewSnapshot({ ...snapshot, ...patch });
           publish();
-          return;
+          return args[1] ? { snapshotRevision: snapshot.snapshotRevision! } : undefined;
         }
         case "openExternal": {
           const url = publicNotesURL(args[0] as string);

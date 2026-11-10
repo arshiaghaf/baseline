@@ -91,7 +91,10 @@ export type BaselineAPI = {
   setSearchText(searchText: string, requestID?: string): Promise<SearchEditAcknowledgement | void>;
   toggleCollapsedSection(kind: "app" | "homebrew", sectionID: string): Promise<void>;
   setSelectedTab(tab: MenuTab): Promise<void>;
-  updatePreferences(patch: PreferencePatch): Promise<void>;
+  updatePreferences(
+    patch: PreferencePatch,
+    acknowledge?: boolean
+  ): Promise<{ snapshotRevision: number } | void>;
   acknowledgeProfileStatsReset(): Promise<void>;
   dismissOperationFailure(id: string): Promise<void>;
   toggleIgnoredApp(appID: string): Promise<void>;

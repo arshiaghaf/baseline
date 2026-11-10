@@ -4160,14 +4160,20 @@ describe("renderer button parity", () => {
 
     const enabledInterval = screen.getByRole("textbox", { name: "Interval minutes" });
     fireEvent.change(enabledInterval, { target: { value: "30" } });
-    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith({
-      refreshIntervalMinutes: 30
-    });
+    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith(
+      {
+        refreshIntervalMinutes: 30
+      },
+      true
+    );
     fireEvent.blur(enabledInterval);
 
-    expect(window.baseline.updatePreferences).toHaveBeenCalledWith({
-      refreshIntervalMinutes: 30
-    });
+    expect(window.baseline.updatePreferences).toHaveBeenCalledWith(
+      {
+        refreshIntervalMinutes: 30
+      },
+      true
+    );
   });
 
   it("lets refresh interval edits build multi-digit values before committing", () => {
@@ -4181,18 +4187,27 @@ describe("renderer button parity", () => {
     fireEvent.change(interval, { target: { value: "15" } });
 
     expect(interval).toHaveValue("15");
-    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith({
-      refreshIntervalMinutes: 5
-    });
-    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith({
-      refreshIntervalMinutes: 15
-    });
+    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith(
+      {
+        refreshIntervalMinutes: 5
+      },
+      true
+    );
+    expect(window.baseline.updatePreferences).not.toHaveBeenCalledWith(
+      {
+        refreshIntervalMinutes: 15
+      },
+      true
+    );
 
     fireEvent.keyDown(interval, { key: "Enter" });
 
-    expect(window.baseline.updatePreferences).toHaveBeenCalledWith({
-      refreshIntervalMinutes: 15
-    });
+    expect(window.baseline.updatePreferences).toHaveBeenCalledWith(
+      {
+        refreshIntervalMinutes: 15
+      },
+      true
+    );
     rerender(<SettingsView snapshot={snapshot({ refreshIntervalMinutes: 15 })} />);
     fireEvent.blur(interval);
     expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(1);
@@ -5269,9 +5284,12 @@ describe("renderer state ownership regressions", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.blur(input);
     expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(2);
-    expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith({
-      refreshIntervalMinutes: 45
-    });
+    expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith(
+      {
+        refreshIntervalMinutes: 45
+      },
+      true
+    );
     rerender(<RefreshIntervalInput value={45} disabled={false} />);
     fireEvent.blur(input);
     expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(2);
@@ -5302,9 +5320,12 @@ it.each([false, true])(
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.blur(input);
     expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(2);
-    expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith({
-      refreshIntervalMinutes: 45
-    });
+    expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith(
+      {
+        refreshIntervalMinutes: 45
+      },
+      true
+    );
     await act(async () => {});
     rerender(<RefreshIntervalInput value={90} disabled={false} />);
     expect(input).toHaveValue("90");
@@ -5328,9 +5349,12 @@ it("retries a rejected interval even after its value was already echoed", async 
   fireEvent.keyDown(input, { key: "Enter" });
   fireEvent.blur(input);
   expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(2);
-  expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith({
-    refreshIntervalMinutes: 30
-  });
+  expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith(
+    {
+      refreshIntervalMinutes: 30
+    },
+    true
+  );
 });
 
 it("does not let an older interval failure replace a newer pending commit", async () => {
@@ -5504,9 +5528,12 @@ it.each(["", "60"])(
     fireEvent.blur(input);
     if (next) {
       expect(input).toHaveValue("60");
-      expect(window.baseline.updatePreferences).toHaveBeenCalledExactlyOnceWith({
-        refreshIntervalMinutes: 60
-      });
+      expect(window.baseline.updatePreferences).toHaveBeenCalledExactlyOnceWith(
+        {
+          refreshIntervalMinutes: 60
+        },
+        true
+      );
     } else {
       expect(input).toHaveValue("30");
       expect(window.baseline.updatePreferences).not.toHaveBeenCalled();
@@ -5560,58 +5587,96 @@ it.each([false, true])(
 );
 
 it("reconciles a coalesced external interval after its own pending save completes", async () => {
-  let resolveSave!: () => void;
+  let resolveSave!: (value: { snapshotRevision: number }) => void;
   vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
     () =>
-      new Promise<void>((resolve) => {
+      new Promise<{ snapshotRevision: number }>((resolve) => {
         resolveSave = resolve;
       })
   );
-  const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+  const { rerender } = render(
+    <RefreshIntervalInput value={60} disabled={false} snapshotRevision={0} />
+  );
   const input = screen.getByRole("textbox", { name: "Interval minutes" });
   fireEvent.change(input, { target: { value: "30" } });
   fireEvent.keyDown(input, { key: "Enter" });
-  rerender(<RefreshIntervalInput value={90} disabled={false} />);
-  await act(async () => resolveSave());
+  rerender(<RefreshIntervalInput value={90} disabled={false} snapshotRevision={2} />);
+  await act(async () => resolveSave({ snapshotRevision: 1 }));
   expect(input).toHaveValue("90");
 });
 
 it("keeps a newer dirty interval when an older save settles after an external edit", async () => {
-  let resolveSave!: () => void;
+  let resolveSave!: (value: { snapshotRevision: number }) => void;
   vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
     () =>
-      new Promise<void>((resolve) => {
+      new Promise<{ snapshotRevision: number }>((resolve) => {
         resolveSave = resolve;
       })
   );
-  const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+  const { rerender } = render(
+    <RefreshIntervalInput value={60} disabled={false} snapshotRevision={0} />
+  );
   const input = screen.getByRole("textbox", { name: "Interval minutes" });
   fireEvent.change(input, { target: { value: "30" } });
   fireEvent.keyDown(input, { key: "Enter" });
   fireEvent.change(input, { target: { value: "45" } });
-  rerender(<RefreshIntervalInput value={90} disabled={false} />);
-  await act(async () => resolveSave());
+  rerender(<RefreshIntervalInput value={90} disabled={false} snapshotRevision={2} />);
+  await act(async () => resolveSave({ snapshotRevision: 1 }));
   expect(input).toHaveValue("45");
   fireEvent.keyDown(input, { key: "Enter" });
-  expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith({
-    refreshIntervalMinutes: 45
-  });
+  expect(window.baseline.updatePreferences).toHaveBeenLastCalledWith(
+    {
+      refreshIntervalMinutes: 45
+    },
+    true
+  );
 });
 
 it("keeps a submitted interval when save completion precedes its first snapshot echo", async () => {
-  let resolveSave!: () => void;
+  let resolveSave!: (value: { snapshotRevision: number }) => void;
   vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
     () =>
-      new Promise<void>((resolve) => {
+      new Promise<{ snapshotRevision: number }>((resolve) => {
         resolveSave = resolve;
       })
   );
-  const { rerender } = render(<RefreshIntervalInput value={60} disabled={false} />);
+  const { rerender } = render(
+    <RefreshIntervalInput value={60} disabled={false} snapshotRevision={0} />
+  );
   const input = screen.getByRole("textbox", { name: "Interval minutes" });
   fireEvent.change(input, { target: { value: "30" } });
   fireEvent.keyDown(input, { key: "Enter" });
-  await act(async () => resolveSave());
+  await act(async () => resolveSave({ snapshotRevision: 1 }));
   expect(input).toHaveValue("30");
-  rerender(<RefreshIntervalInput value={30} disabled={false} />);
+  rerender(<RefreshIntervalInput value={30} disabled={false} snapshotRevision={1} />);
   expect(input).toHaveValue("30");
 });
+
+it.each([true, false])(
+  "reconciles a coalesced reset to the original interval (responseFirst=%s)",
+  async (responseFirst) => {
+    let acknowledge!: (value: { snapshotRevision: number }) => void;
+    vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          acknowledge = resolve;
+        })
+    );
+    const view = (revision: number) => (
+      <RefreshIntervalInput value={60} disabled={false} snapshotRevision={revision} />
+    );
+    const { rerender } = render(view(0));
+    const input = screen.getByRole("textbox", { name: "Interval minutes" });
+    fireEvent.change(input, { target: { value: "30" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    if (responseFirst) {
+      await act(async () => acknowledge({ snapshotRevision: 1 }));
+      expect(input).toHaveValue("30");
+    }
+    rerender(view(2));
+    if (!responseFirst) await act(async () => acknowledge({ snapshotRevision: 1 }));
+    expect(input).toHaveValue("60");
+    fireEvent.blur(input);
+    expect(window.baseline.updatePreferences).toHaveBeenCalledTimes(1);
+  }
+);

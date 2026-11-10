@@ -797,7 +797,9 @@ function wireIpc(): void {
     store.toggleCollapsedSection(kind, sectionID)
   );
   handle("setSelectedTab", (_event, tab: MenuTab) => store.setSelectedTab(tab));
-  handle("updatePreferences", (_event, patch: PreferencePatch) => store.updatePreferences(patch));
+  handle("updatePreferences", (_event, patch: PreferencePatch, acknowledge?: boolean) =>
+    store.updatePreferences(patch, acknowledge)
+  );
   handle("acknowledgeProfileStatsReset", () => store.acknowledgeProfileStatsReset());
   handle("dismissOperationFailure", (_event, id: string) => store.dismissOperationFailure(id));
   handle("toggleIgnoredApp", (_event, appID: string) => store.toggleIgnoredApp(appID));

@@ -83,7 +83,7 @@ const argumentValidators: Record<InvokeMethod, ValueValidator[]> = {
       typeof value === "string" &&
       ["all", "apps", "homebrew", "installed", "ignored"].includes(value)
   ],
-  updatePreferences: [isPreferencePatch],
+  updatePreferences: [isPreferencePatch, optional(isBoolean)],
   acknowledgeProfileStatsReset: [],
   dismissOperationFailure: [isString],
   toggleIgnoredApp: [isString],

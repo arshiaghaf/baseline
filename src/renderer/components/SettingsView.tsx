@@ -334,6 +334,7 @@ export function SettingsPane({
               />
               <RefreshIntervalInput
                 value={snapshot.refreshIntervalMinutes}
+                snapshotRevision={snapshot.snapshotRevision}
                 disabled={!snapshot.autoRefreshEnabled}
               />
             </div>
@@ -683,25 +684,43 @@ export function AppearanceSelector({ value }: { value: AppearancePreference }) {
   );
 }
 
-export function RefreshIntervalInput({ value, disabled }: { value: number; disabled: boolean }) {
+export function RefreshIntervalInput({
+  value,
+  disabled,
+  snapshotRevision
+}: {
+  value: number;
+  disabled: boolean;
+  snapshotRevision?: number;
+}) {
   const [draft, setDraft] = useState(String(value));
   const dirtyRef = useRef(false);
-  const latestValueRef = useRef(value);
-  latestValueRef.current = value;
-  const pendingRef = useRef<{ id: number; value: string }[]>([]);
+  const latestSnapshotRef = useRef({ value, snapshotRevision });
+  latestSnapshotRef.current = { value, snapshotRevision };
+  const pendingRef = useRef<{ id: number; value: string; snapshotRevision?: number }[]>([]);
   const submissionRef = useRef(0);
   const committedRef = useRef<string | undefined>(String(value));
   const [saveError, setSaveError] = useState(false);
 
-  useEffect(() => {
-    const next = String(value);
-    const acknowledgement = pendingRef.current.map((pending) => pending.value).lastIndexOf(next);
-    if (acknowledgement >= 0) pendingRef.current.splice(0, acknowledgement + 1);
-    // A submitted value and a newer, unsubmitted edit have different lifetimes.
+  const synchronize = () => {
+    const incoming = latestSnapshotRef.current;
+    const next = String(incoming.value);
+    if (incoming.snapshotRevision !== undefined) {
+      pendingRef.current = pendingRef.current.filter(
+        (pending) =>
+          pending.snapshotRevision === undefined ||
+          incoming.snapshotRevision! < pending.snapshotRevision
+      );
+    } else {
+      // Support callers without revision metadata; production supplies revisions.
+      const acknowledgement = pendingRef.current.map((pending) => pending.value).lastIndexOf(next);
+      if (acknowledgement >= 0) pendingRef.current.splice(0, acknowledgement + 1);
+    }
     if (dirtyRef.current || pendingRef.current.length) return;
     committedRef.current = next;
     setDraft(next);
-  }, [value]);
+  };
+  useEffect(synchronize, [value, snapshotRevision]);
 
   const commitDraft = () => {
     if (!dirtyRef.current) return;
@@ -718,24 +737,17 @@ export function RefreshIntervalInput({ value, disabled }: { value: number; disab
     setDraft(normalizedDraft);
     if (committedRef.current !== undefined && intendedValue === normalizedDraft) return;
     committedRef.current = normalizedDraft;
-    const submittedFromValue = value;
     const id = ++submissionRef.current;
     pendingRef.current.push({ id, value: normalizedDraft });
     setSaveError(false);
-    void Promise.resolve(baseline.updatePreferences({ refreshIntervalMinutes })).then(
-      () => {
-        pendingRef.current = pendingRef.current.filter((pending) => pending.id !== id);
-        // React can coalesce our acknowledgement with a later external edit.
-        // Reconcile that observed change once saves settle, but retain a newer
-        // dirty draft and do not roll back while waiting for the first echo.
-        if (
-          !dirtyRef.current &&
-          !pendingRef.current.length &&
-          latestValueRef.current !== submittedFromValue
-        ) {
-          const latest = String(latestValueRef.current);
-          committedRef.current = latest;
-          setDraft(latest);
+    void Promise.resolve(baseline.updatePreferences({ refreshIntervalMinutes }, true)).then(
+      (acknowledgement) => {
+        const pending = pendingRef.current.find((pending) => pending.id === id);
+        if (acknowledgement && pending) {
+          pending.snapshotRevision = acknowledgement.snapshotRevision;
+          synchronize();
+        } else if (!acknowledgement) {
+          pendingRef.current = pendingRef.current.filter((pending) => pending.id !== id);
         }
       },
       () => {

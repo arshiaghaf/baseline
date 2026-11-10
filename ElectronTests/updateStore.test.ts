@@ -7610,3 +7610,14 @@ it("publishes search edit acknowledgements and identifies external query changes
   await store.setSearchText("external");
   expect(store.getSnapshot().searchTextRequestID).not.toBe("renderer:2");
 });
+
+it("acknowledges the applied preference revision before concurrent persistence settles", async () => {
+  const store = await makeStore({});
+  const saving = store.updatePreferences({ refreshIntervalMinutes: 30 }, true);
+  const appliedRevision = store.getSnapshot().snapshotRevision;
+  const resetting = store.updatePreferences({ refreshIntervalMinutes: 60 });
+  expect(store.getSnapshot().snapshotRevision).toBeGreaterThan(appliedRevision!);
+  expect(await saving).toEqual({ snapshotRevision: appliedRevision });
+  expect(await resetting).toBeUndefined();
+  expect(store.getSnapshot().refreshIntervalMinutes).toBe(60);
+});
