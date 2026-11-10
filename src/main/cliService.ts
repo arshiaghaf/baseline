@@ -39,10 +39,10 @@ const maintenanceFailure = (snapshot: BaselineSnapshot) =>
   );
 const maintenanceEvidence = (snapshot: BaselineSnapshot) => {
   const failure = maintenanceFailure(snapshot);
-  return JSON.stringify([
-    failure,
-    failure && snapshot.operationFailureDetails?.[failure.id]?.attemptID
-  ]);
+  return {
+    summary: JSON.stringify(failure),
+    attemptID: failure && snapshot.operationFailureDetails?.[failure.id]?.attemptID
+  };
 };
 const freshnessMS = 15 * 60_000;
 
@@ -526,8 +526,14 @@ export class CLIService {
               target.availableVersion !== undefined &&
               compareVersions(item.installedVersion, target.availableVersion) >= 0;
             const maintenance = maintenanceFailure(after);
+            const currentMaintenance = maintenanceEvidence(after);
+            // Starting a mutation clears old private details. Losing an old
+            // attempt ID is not evidence that its historical failure recurred.
             const newMaintenance =
-              maintenance && maintenanceEvidence(after) !== previousMaintenance
+              maintenance &&
+              (currentMaintenance.summary !== previousMaintenance.summary ||
+                (currentMaintenance.attemptID !== undefined &&
+                  currentMaintenance.attemptID !== previousMaintenance.attemptID))
                 ? maintenance
                 : undefined;
             op.results.push({

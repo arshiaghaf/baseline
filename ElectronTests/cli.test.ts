@@ -514,7 +514,7 @@ describe("shared backend operations", () => {
       ).toMatchObject({ state: "failed", exitCode: 1, results: [{ status: "failed" }] });
     }
   );
-  it.each(["first", "new", "same-time", "historical", "cleared"])(
+  it.each(["first", "new", "same-time", "historical", "forgotten-details", "cleared"])(
     "distinguishes %s maintenance failures from installed package success",
     async (scenario) => {
       const f = fixture();
@@ -545,6 +545,7 @@ describe("shared backend operations", () => {
           f.snapshot.operationFailureDetails = {
             [maintenance.id]: { attemptID: "after", outputTail: "private new output" }
           };
+        if (scenario === "forgotten-details") f.snapshot.operationFailureDetails = {};
         if (scenario === "cleared") f.snapshot.operationFailures = [];
       });
       const result = await finished(
