@@ -29,6 +29,7 @@ for (const route of ["main", "menubar"]) {
         path.join(directory, "snapshot.json"),
         JSON.stringify({
           ...defaultPersistedSnapshot(),
+          welcomeDismissed: true,
           operationFailures: [
             {
               id: "fixture-failure",
