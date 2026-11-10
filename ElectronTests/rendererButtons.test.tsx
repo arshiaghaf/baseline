@@ -130,6 +130,7 @@ it.each([
 function snapshot(patch: Partial<BaselineSnapshot> = {}): BaselineSnapshot {
   return {
     ...defaultPersistedSnapshot(),
+    welcomeDismissed: true,
     apps: [app],
     updates: [update],
     homebrewItems: [cask],
@@ -5028,7 +5029,7 @@ describe("Homebrew empty copy scope", () => {
 });
 
 describe("permission introduction", () => {
-  it("waits for saved preferences, dismisses without gating checks, and stays dismissed on relaunch", async () => {
+  it("waits for saved preferences and keeps interrupted welcomes available", async () => {
     let load!: (value: BaselineSnapshot) => void;
     vi.mocked(window.baseline.getSnapshot).mockImplementationOnce(
       () =>
@@ -5036,30 +5037,58 @@ describe("permission introduction", () => {
           load = resolve;
         })
     );
-    vi.mocked(window.baseline.updatePreferences).mockResolvedValue(undefined);
     window.location.hash = "/main";
     const view = render(<App />);
-    expect(screen.queryByText("Welcome to Baseline")).not.toBeInTheDocument();
-    await act(async () => load(snapshot()));
-    await waitFor(() => expect(window.baseline.permissionGuide).toHaveBeenCalledWith("show"));
+    expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument();
+    await act(async () => load(snapshot({ welcomeDismissed: false })));
+    expect(screen.getByRole("button", { name: "Skip welcome" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(window.baseline.updatePreferences).not.toHaveBeenCalled();
-    expect(screen.queryByText("Welcome to Baseline")).not.toBeInTheDocument();
-    expect(window.baseline.openExternal).not.toHaveBeenCalled();
+    expect(window.baseline.permissionGuide).not.toHaveBeenCalled();
     view.unmount();
-    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(
-      snapshot({ updateIntroductionDismissed: true })
+    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot({ welcomeDismissed: false }));
+    const resumed = render(<App />);
+    await screen.findByText("Welcome to Baseline");
+    fireEvent.click(screen.getByRole("button", { name: "Skip welcome" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument()
     );
+    expect(window.baseline.updatePreferences).toHaveBeenCalledWith({ welcomeDismissed: true });
+    resumed.unmount();
+    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot({ welcomeDismissed: true }));
     render(<App />);
     await act(async () => {});
-    expect(screen.queryByText("Welcome to Baseline")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument();
+  });
+
+  it("retains the welcome when an optimistic preference event precedes a failed disk write", async () => {
+    let receive!: Parameters<typeof window.baseline.onSnapshotChanged>[0];
+    vi.mocked(window.baseline.onSnapshotChanged).mockImplementation((callback) => {
+      receive = callback;
+      return () => {};
+    });
+    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot({ welcomeDismissed: false }));
+    vi.mocked(window.baseline.updatePreferences).mockImplementationOnce(async () => {
+      receive(snapshot({ welcomeDismissed: true }));
+      throw new Error("disk unavailable");
+    });
+    window.location.hash = "/main";
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Skip welcome" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t be saved");
+    expect(screen.getByRole("button", { name: "Skip welcome" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Skip welcome" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument()
+    );
   });
 
   it("keeps first-run copy out of the compact tray and permission guidance inside failure details", async () => {
-    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot());
+    vi.mocked(window.baseline.getSnapshot).mockResolvedValue(snapshot({ welcomeDismissed: false }));
     window.location.hash = "/menubar";
     const view = render(<App />);
     await act(async () => {});
-    expect(screen.queryByText("Welcome to Baseline")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip welcome" })).not.toBeInTheDocument();
     view.unmount();
     render(
       <OperationFailures

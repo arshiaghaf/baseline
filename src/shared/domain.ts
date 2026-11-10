@@ -285,6 +285,7 @@ export type PersistedSnapshot = {
   selectedTab: MenuTab;
   collapsedAppSectionIDs: string[];
   collapsedHomebrewSectionIDs: string[];
+  welcomeDismissed?: boolean;
   updateIntroductionDismissed?: boolean;
   autoRefreshEnabled: boolean;
   refreshIntervalMinutes: number;
@@ -444,6 +445,7 @@ export function defaultPersistedSnapshot(now = new Date().toISOString()): Persis
     selectedTab: "all",
     collapsedAppSectionIDs: [],
     collapsedHomebrewSectionIDs: [],
+    welcomeDismissed: false,
     autoRefreshEnabled: true,
     refreshIntervalMinutes: 60,
     appearancePreference: "system",

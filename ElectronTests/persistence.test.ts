@@ -165,6 +165,25 @@ describe("snapshot persistence", () => {
     expect(Number.isFinite(new Date(loaded.profileStats.startedUsingAt).getTime())).toBe(true);
   });
 
+  it("shows new profiles the welcome, resumes interruption, and leaves existing profiles alone", async () => {
+    const userData = await mkdtemp(path.join(os.tmpdir(), "baseline-welcome-"));
+    tempDirs.push(userData);
+    const persistence = new SnapshotPersistence(userData);
+    const fresh = await persistence.load();
+    expect(fresh.welcomeDismissed).toBe(false);
+    await persistence.save(fresh);
+    expect((await persistence.load()).welcomeDismissed).toBe(false);
+    await persistence.save({ ...fresh, welcomeDismissed: true });
+    expect((await persistence.load()).welcomeDismissed).toBe(true);
+    for (const value of [undefined, "yes", null]) {
+      await writeFile(
+        path.join(userData, "baseline-snapshot.json"),
+        JSON.stringify({ ...fresh, welcomeDismissed: value })
+      );
+      expect((await persistence.load()).welcomeDismissed).toBe(true);
+    }
+  });
+
   it("remembers introduction dismissal without treating it as a permission grant", async () => {
     const userData = await mkdtemp(path.join(os.tmpdir(), "baseline-introduction-"));
     tempDirs.push(userData);
