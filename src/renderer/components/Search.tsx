@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Arshia Ghaf
 // SPDX-License-Identifier: GPL-3.0-only
 
-import { baseline } from "../ipc";
+import { useSearchDraft, type SearchDraft } from "../hooks/useSearchDraft";
 import React, { useEffect, useRef } from "react";
 import { Search, X } from "lucide-react";
 import type { BaselineSnapshot } from "../../shared/domain";
@@ -15,14 +15,18 @@ export function ToolbarSearch({
   snapshot,
   onToggle,
   onClose,
-  toolbarButtonTabIndex
+  toolbarButtonTabIndex,
+  searchDraft: providedDraft
 }: {
   open: boolean;
   snapshot: BaselineSnapshot;
   onToggle: () => void;
   onClose: () => void;
   toolbarButtonTabIndex?: number;
+  searchDraft?: SearchDraft;
 }) {
+  const localDraft = useSearchDraft(snapshot);
+  const searchDraft = providedDraft ?? localDraft;
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -50,7 +54,7 @@ export function ToolbarSearch({
   }, [onClose, open]);
 
   const clearSearch = () => {
-    void baseline.setSearchText("");
+    searchDraft.change("");
     inputRef.current?.focus();
   };
 
@@ -63,13 +67,22 @@ export function ToolbarSearch({
       <div className="toolbar-search-field">
         <input
           ref={inputRef}
-          value={snapshot.searchText}
-          onChange={(event) => void baseline.setSearchText(event.currentTarget.value)}
+          value={searchDraft.text}
+          onChange={(event) => searchDraft.change(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && searchDraft.error && !event.nativeEvent.isComposing)
+              searchDraft.retry();
+          }}
+          onCompositionStart={searchDraft.compositionStart}
+          onCompositionEnd={(event) => searchDraft.compositionEnd(event.currentTarget.value)}
           placeholder="Search"
           tabIndex={open ? 0 : -1}
           aria-hidden={!open}
         />
-        {snapshot.searchText ? (
+        {searchDraft.error && (
+          <span role="alert">Could not update search. Press Enter to try again.</span>
+        )}
+        {searchDraft.text ? (
           <button
             className="search-clear-button"
             onClick={clearSearch}
@@ -97,9 +110,11 @@ export function ToolbarSearch({
 export function SearchPalette({
   snapshot,
   derived,
-  onClose
+  onClose,
+  searchDraft
 }: {
   snapshot: BaselineSnapshot;
+  searchDraft?: SearchDraft;
   derived: DerivedSections;
   onClose: () => void;
 }) {
@@ -157,7 +172,7 @@ export function SearchPalette({
           tabIndex={-1}
           onKeyDownCapture={handleDialogKeyDown}
         >
-          <SearchField snapshot={snapshot} autoFocus />
+          <SearchField snapshot={snapshot} searchDraft={searchDraft} autoFocus />
           {snapshot.searchText.trim() ? (
             <SearchPaletteResults snapshot={snapshot} derived={derived} />
           ) : (
@@ -171,12 +186,16 @@ export function SearchPalette({
 
 export function SearchField({
   snapshot,
-  autoFocus = false
+  autoFocus = false,
+  searchDraft: providedDraft
 }: {
   snapshot: BaselineSnapshot;
   autoFocus?: boolean;
+  searchDraft?: SearchDraft;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const localDraft = useSearchDraft(snapshot);
+  const searchDraft = providedDraft ?? localDraft;
 
   useEffect(() => {
     if (!autoFocus) {
@@ -192,7 +211,7 @@ export function SearchField({
   }, [autoFocus]);
 
   const clearSearch = () => {
-    void baseline.setSearchText("");
+    searchDraft.change("");
     inputRef.current?.focus();
   };
 
@@ -201,11 +220,20 @@ export function SearchField({
       <Search size={15} strokeWidth={toolbarIconStrokeWidth} />
       <input
         ref={inputRef}
-        value={snapshot.searchText}
-        onChange={(event) => void baseline.setSearchText(event.currentTarget.value)}
+        value={searchDraft.text}
+        onChange={(event) => searchDraft.change(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && searchDraft.error && !event.nativeEvent.isComposing)
+            searchDraft.retry();
+        }}
+        onCompositionStart={searchDraft.compositionStart}
+        onCompositionEnd={(event) => searchDraft.compositionEnd(event.currentTarget.value)}
         placeholder="Search"
       />
-      {snapshot.searchText ? (
+      {searchDraft.error && (
+        <span role="alert">Could not update search. Press Enter to try again.</span>
+      )}
+      {searchDraft.text ? (
         <button
           className="search-clear-button"
           onClick={clearSearch}

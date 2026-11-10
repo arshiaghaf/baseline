@@ -31,7 +31,9 @@ it("keeps stdout valid JSON for non-TTY errors and local discovery", async () =>
   for (const args of [
     ["--version", "--json"],
     ["--json", "--version"],
-    ["--help", "--json"]
+    ["--help", "--json"],
+    ["help", "update", "--json"],
+    ["update", "--help", "--json"]
   ]) {
     const result = await promisify(execFile)(process.execPath, [cli, ...args]);
     expect(result.stdout.trim().split("\n")).toHaveLength(1);
@@ -133,3 +135,161 @@ it.each(["timeout", "SIGINT", "SIGTERM"] as const)(
     }
   }
 );
+
+it.each([
+  { stream: "stdout", outcome: "failed", json: true, code: 1 },
+  { stream: "stdout", outcome: "updated", json: true, code: 0 },
+  { stream: "stdout", outcome: "action", json: true, code: 3 },
+  { stream: "stderr", outcome: "failed", json: false, code: 1 }
+] as const)(
+  "preserves $outcome update outcome with closed $stream",
+  async ({ stream, outcome, json, code }) => {
+    const profile = path.join(directory, `pipe-${stream}-${outcome}`);
+    const snapshot = {
+      ...defaultPersistedSnapshot(),
+      isRefreshing: false,
+      appDiscoveryComplete: true,
+      homebrewCheckStatus: "complete",
+      defaultScanDirectories: [],
+      homebrewItems: [
+        {
+          id: "formula:example",
+          token: "example",
+          name: "Example",
+          kind: outcome === "action" ? "cask" : "formula",
+          fullToken: "example",
+          tap: "homebrew/cask",
+          installedVersion: { raw: "1" },
+          latestVersion: { raw: "2" },
+          isOutdated: true,
+          formulaIdentity: {
+            name: "example",
+            fullName: "example",
+            tap: "homebrew/core",
+            oldNames: []
+          }
+        }
+      ]
+    } as unknown as BaselineSnapshot;
+    let updates = 0;
+    let settled = false;
+    const service = new CLIService(
+      {
+        getSnapshot: () => structuredClone(snapshot),
+        hasActiveUpdateOperation: () => false,
+        refreshToolStatus: async () => undefined,
+        refresh: async () => {
+          snapshot.lastRefreshDate = new Date().toISOString();
+        },
+        performCLIAppHandoff: async () => undefined,
+        performHomebrewUpdate: async () => {
+          updates++;
+          // Leave a window for an early stderr EPIPE; observation must continue.
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          if (outcome === "updated") {
+            snapshot.homebrewItems[0]!.installedVersion = {
+              raw: "2"
+            } as (typeof snapshot.homebrewItems)[0]["installedVersion"];
+            snapshot.homebrewItems[0]!.isOutdated = false;
+          }
+          settled = true;
+        }
+      },
+      "1.0.0"
+    );
+    const check = await service.handle({ schemaVersion: 1, command: "check" });
+    const checkID = (check.data as { operation: CLIOperation }).operation.id;
+    for (let n = 0; n < 100; n++) {
+      const response = await service.handle({
+        schemaVersion: 1,
+        command: "operation",
+        operationID: checkID
+      });
+      if ((response.data as { operation: CLIOperation }).operation.finishedAt) break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    const close = await startCLIServer(profile, service);
+    const child = spawn(
+      process.execPath,
+      [cli, "update", "brew:formula:example", "--yes", ...(json ? ["--json"] : [])],
+      {
+        env: { ...process.env, BASELINE_USER_DATA_DIR: profile },
+        stdio: ["ignore", "pipe", "pipe"]
+      }
+    );
+    const exited = once(child, "close");
+    child[stream].destroy();
+    const other = stream === "stdout" ? child.stderr : child.stdout;
+    other.resume();
+    try {
+      expect((await exited)[0]).toBe(code);
+      expect(updates).toBe(outcome === "action" ? 0 : 1);
+      if (outcome !== "action") expect(settled).toBe(true);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await exited;
+      await close();
+      await rm(cliEndpoint(profile).directory, { recursive: true, force: true });
+    }
+  }
+);
+
+it("keeps human coverage warnings on stderr and exact Unicode identities in JSON", async () => {
+  const profile = path.join(directory, "presentation");
+  const id = "/Applications/Example\u202e\u200b.app";
+  const snapshot = {
+    ...defaultPersistedSnapshot(),
+    isRefreshing: false,
+    appDiscoveryComplete: false,
+    refreshCheckFailed: true,
+    refreshErrorMessage: "Unreadable folder\u202e",
+    homebrewCheckStatus: "incomplete",
+    defaultScanDirectories: [],
+    apps: [
+      {
+        id,
+        displayName: "Example\u202e\u200b",
+        bundlePath: id,
+        sourceHint: "sparkle",
+        localVersion: { raw: "1" }
+      }
+    ],
+    appProviderChecks: {
+      [id]: { fingerprint: "fixture", status: "failed", checkedAt: "2026-01-01T00:00:00Z" }
+    }
+  } as unknown as BaselineSnapshot;
+  const service = new CLIService(
+    {
+      getSnapshot: () => structuredClone(snapshot),
+      hasActiveUpdateOperation: () => false,
+      refreshToolStatus: async () => undefined,
+      refresh: async () => undefined,
+      performHomebrewUpdate: async () => undefined,
+      performCLIAppHandoff: async () => undefined
+    },
+    "1.0.0"
+  );
+  const close = await startCLIServer(profile, service);
+  const run = (args: string[]) =>
+    promisify(execFile)(process.execPath, [cli, ...args], {
+      env: { ...process.env, BASELINE_USER_DATA_DIR: profile }
+    });
+  try {
+    for (const args of [["list"], ["inspect", `app:${id}`]]) {
+      const result = await run(args);
+      expect(result.stdout).toContain("failed\t2026-01-01T00:00:00Z");
+      expect(result.stdout).toContain("Example\\u{202e}\\u{200b}");
+      expect(result.stdout).not.toContain("\u202e");
+      expect(result.stderr).toContain("App discovery is incomplete");
+      expect(result.stderr).toContain("Unreadable folder\\u{202e}");
+      const json = await run([...args, "--json"]);
+      expect(json.stderr).toBe("");
+      const data = JSON.parse(json.stdout).data;
+      expect((data.targets?.[0] ?? data.target).id).toBe(`app:${id}`);
+      expect(data.notices).toContain("Unreadable folder\u202e");
+    }
+  } finally {
+    await close();
+    await rm(cliEndpoint(profile).directory, { recursive: true, force: true });
+  }
+});

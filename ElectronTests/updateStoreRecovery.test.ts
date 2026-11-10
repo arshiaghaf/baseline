@@ -17,6 +17,7 @@ import {
   type HomebrewManagedItem
 } from "../src/shared/domain";
 import { version } from "../src/shared/version";
+import { homebrewCommandToken } from "../src/shared/homebrewIdentity";
 
 const app: AppRecord = {
   id: "/Applications/Managed.app",
@@ -180,8 +181,18 @@ describe("refresh inventory recovery", () => {
         .sort()
     ).toEqual([cask.id, formula.id].sort());
     expect(store.getSnapshot().homebrewItems.find((item) => item.id === cask.id)?.appID).toBe(
-      app.id
+      failure.failCaskList ? undefined : app.id
     );
+    const retainedCask = store.getSnapshot().homebrewItems.find((item) => item.id === cask.id)!;
+    if (failure.failCaskList) {
+      expect(retainedCask.caskMembershipVerified).toBe(false);
+      expect(retainedCask.isOutdated).toBe(false);
+      expect(homebrewCommandToken(retainedCask)).toBeUndefined();
+      expect(
+        (await persistence.load()).homebrewItems.find((item) => item.id === cask.id)
+          ?.caskMembershipVerified
+      ).toBe(false);
+    }
     expect((await persistence.load()).homebrewItems.map((item) => item.id).sort()).toEqual(
       [cask.id, formula.id].sort()
     );

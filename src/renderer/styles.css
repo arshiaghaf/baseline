@@ -16,6 +16,7 @@
 @import "./styles/95-dark.css";
 @import "./styles/98-release-notes.css";
 @import "./styles/99-operation-report.css";
+@import "./styles/96-welcome.css";
 
 .permission-help {
   font-size: 12px;

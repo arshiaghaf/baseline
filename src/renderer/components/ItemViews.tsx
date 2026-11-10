@@ -579,7 +579,7 @@ export function HomebrewUpdateCard({
             disabled={isUninstalling}
             onToggleIgnore={() => void baseline.toggleIgnoredHomebrew(item.id)}
             uninstallLabel="Uninstall"
-            canUninstall={item.kind === "cask"}
+            canUninstall={item.kind === "cask" && item.caskMembershipVerified !== false}
             uninstalling={isUninstalling}
             uninstallDisabled={isUpdating || isUninstalling || homebrewUninstallBlocked}
             onUninstall={() => requestActionConfirmation({ type: "uninstall", item })}
@@ -685,7 +685,7 @@ export function RecentHomebrewCard({
             disabled={isUninstalling}
             onToggleIgnore={() => void baseline.toggleIgnoredHomebrew(item.id)}
             uninstallLabel="Uninstall"
-            canUninstall={item.kind === "cask"}
+            canUninstall={item.kind === "cask" && item.caskMembershipVerified !== false}
             uninstalling={isUninstalling}
             uninstallDisabled={isUpdating || isUninstalling || homebrewUninstallBlocked}
             onUninstall={() => requestActionConfirmation({ type: "uninstall", item })}
@@ -741,7 +741,7 @@ export function IgnoredHomebrewCard({
             }
             onToggleIgnore={() => void baseline.toggleIgnoredHomebrew(item.id)}
             uninstallLabel="Uninstall"
-            canUninstall={item.kind === "cask"}
+            canUninstall={item.kind === "cask" && item.caskMembershipVerified !== false}
             uninstalling={isUninstalling}
             uninstallDisabled={isUpdating || isUninstalling || homebrewUninstallBlocked}
             onUninstall={() => requestActionConfirmation({ type: "uninstall", item })}
@@ -845,7 +845,7 @@ export function HomebrewRow({
           disabled={isUninstalling}
           onToggleIgnore={() => void baseline.toggleIgnoredHomebrew(item.id)}
           uninstallLabel="Uninstall"
-          canUninstall={item.kind === "cask"}
+          canUninstall={item.kind === "cask" && item.caskMembershipVerified !== false}
           uninstalling={isUninstalling}
           uninstallDisabled={isUpdating || isUninstalling || homebrewUninstallBlocked}
           onUninstall={() => requestActionConfirmation({ type: "uninstall", item })}

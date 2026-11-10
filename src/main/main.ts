@@ -790,9 +790,16 @@ function wireIpc(): void {
   handle("refresh", (_event, lightweight?: boolean, forceAppDiscovery?: boolean) =>
     store.refresh(lightweight, { forceAppDiscovery })
   );
-  handle("setSearchText", (_event, value: string) => store.setSearchText(value));
+  handle("setSearchText", (_event, value: string, requestID?: string) =>
+    store.setSearchText(value, requestID)
+  );
+  handle("toggleCollapsedSection", (_event, kind, sectionID) =>
+    store.toggleCollapsedSection(kind, sectionID)
+  );
   handle("setSelectedTab", (_event, tab: MenuTab) => store.setSelectedTab(tab));
-  handle("updatePreferences", (_event, patch: PreferencePatch) => store.updatePreferences(patch));
+  handle("updatePreferences", (_event, patch: PreferencePatch, acknowledge?: boolean) =>
+    store.updatePreferences(patch, acknowledge)
+  );
   handle("acknowledgeProfileStatsReset", () => store.acknowledgeProfileStatsReset());
   handle("dismissOperationFailure", (_event, id: string) => store.dismissOperationFailure(id));
   handle("toggleIgnoredApp", (_event, appID: string) => store.toggleIgnoredApp(appID));

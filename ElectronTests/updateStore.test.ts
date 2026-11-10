@@ -1147,9 +1147,10 @@ describe("update store helpers", () => {
       },
       runBrewCommand
     });
-    await store.updatePreferences({ updateIntroductionDismissed: true });
+    await store.updatePreferences({ updateIntroductionDismissed: true, welcomeDismissed: true });
     await expect(new SnapshotPersistence(userData).load()).resolves.toMatchObject({
-      updateIntroductionDismissed: true
+      updateIntroductionDismissed: true,
+      welcomeDismissed: true
     });
     expect(runBrewCommand).not.toHaveBeenCalled();
     await expect(
@@ -7577,3 +7578,47 @@ async function observeTestPromise<T>(promise: Promise<T>, signal: AbortSignal): 
     signal.removeEventListener("abort", cancel);
   }
 }
+
+it("composes rapid section-toggle intents across windows before persistence completes", async () => {
+  const store = await makeStore({});
+  const first = store.toggleCollapsedSection("app", "recentlyUpdated");
+  const second = store.toggleCollapsedSection("app", "ignored");
+  const third = store.toggleCollapsedSection("homebrew", "installed");
+  expect(store.getSnapshot().collapsedAppSectionIDs).toEqual(["ignored", "recentlyUpdated"]);
+  expect(store.getSnapshot().collapsedHomebrewSectionIDs).toEqual(["installed"]);
+  const fourth = store.toggleCollapsedSection("app", "ignored");
+  const fifth = store.toggleCollapsedSection("app", "ignored");
+  await Promise.all([first, second, third, fourth, fifth]);
+  expect(store.getSnapshot().collapsedAppSectionIDs).toEqual(["ignored", "recentlyUpdated"]);
+});
+
+it("publishes search edit acknowledgements and identifies external query changes", async () => {
+  const store = await makeStore({});
+  const acknowledgement = await store.setSearchText("first", "renderer:1");
+  expect(acknowledgement).toEqual({
+    requestID: "renderer:1",
+    snapshotRevision: store.getSnapshot().snapshotRevision
+  });
+  expect(store.getSnapshot()).toMatchObject({
+    searchText: "first",
+    searchTextRequestID: "renderer:1"
+  });
+  await store.setSearchText("second", "renderer:2");
+  expect(store.getSnapshot()).toMatchObject({
+    searchText: "second",
+    searchTextRequestID: "renderer:2"
+  });
+  await store.setSearchText("external");
+  expect(store.getSnapshot().searchTextRequestID).not.toBe("renderer:2");
+});
+
+it("acknowledges the applied preference revision before concurrent persistence settles", async () => {
+  const store = await makeStore({});
+  const saving = store.updatePreferences({ refreshIntervalMinutes: 30 }, true);
+  const appliedRevision = store.getSnapshot().snapshotRevision;
+  const resetting = store.updatePreferences({ refreshIntervalMinutes: 60 });
+  expect(store.getSnapshot().snapshotRevision).toBeGreaterThan(appliedRevision!);
+  expect(await saving).toEqual({ snapshotRevision: appliedRevision });
+  expect(await resetting).toBeUndefined();
+  expect(store.getSnapshot().refreshIntervalMinutes).toBe(60);
+});

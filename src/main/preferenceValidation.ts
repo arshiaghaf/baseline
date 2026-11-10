@@ -20,6 +20,7 @@ export function isPlainRecord(value: unknown): value is Record<string, unknown> 
 const preferenceValidators: Record<keyof PreferencePatch, ValueValidator> = {
   collapsedAppSectionIDs: isStringArray,
   collapsedHomebrewSectionIDs: isStringArray,
+  welcomeDismissed: isBoolean,
   updateIntroductionDismissed: isBoolean,
   autoRefreshEnabled: isBoolean,
   refreshIntervalMinutes: (value) => typeof value === "number" && Number.isFinite(value),

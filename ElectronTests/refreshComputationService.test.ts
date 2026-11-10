@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { describe, expect, it, vi } from "vitest";
+import { appProviderFingerprint } from "../src/main/appUpdateLookupService";
 import type { AppRecord, HomebrewManagedItem } from "../src/shared/domain";
 import { emptyHomebrewCaskIndex, emptyHomebrewFormulaIndex } from "../src/shared/domain";
 import { version } from "../src/shared/version";
@@ -847,3 +848,92 @@ it("retains scoped warnings used by published results when a later failure sees 
     lastRefreshNoticeMessage: "Using cached Homebrew catalogue metadata. Refresh to retry."
   });
 });
+
+it.each(["absent", "original", "replacement"])(
+  "discards ambiguous cached provider and history evidence before repairing IDs (fingerprint: %s)",
+  async (fingerprint) => {
+    const original: AppRecord = {
+      id: "/fixture/Alias.app",
+      bundlePath: "/fixture/Canonical.app",
+      displayName: "Original",
+      bundleIdentifier: "test.original",
+      localVersion: version("2"),
+      sourceHint: "unknown"
+    };
+    const replacement: AppRecord = {
+      ...original,
+      bundlePath: original.id,
+      displayName: "Replacement",
+      bundleIdentifier: "test.replacement"
+    };
+    const { service, scanner, state, clients, patches } = setup(
+      Promise.resolve([replacement, original]),
+      completeInventory
+    );
+    state.apps = [replacement, original];
+    state.ignoredIDs = [original.id];
+    state.updates = [
+      {
+        id: original.id,
+        appID: original.id,
+        source: "appStore",
+        supportLevel: "supported",
+        localVersion: version("2"),
+        remoteVersion: version("9"),
+        updateURL: "https://example.com/wrong-owner",
+        checkedAt: "2026-01-01T00:00:00Z"
+      }
+    ];
+    state.appUpdateComparisonBaseline = [
+      { appID: original.id, localVersion: version("1"), source: "appStore" }
+    ];
+    if (fingerprint !== "absent")
+      state.appProviderChecks = {
+        [original.id]: {
+          fingerprint: appProviderFingerprint(fingerprint === "original" ? original : replacement),
+          storefront: "us",
+          status: "checked",
+          source: "appStore",
+          appStoreIdentity: { productID: 999, platform: "mac", storefront: "us" },
+          checkedAt: "2026-01-01T00:00:00Z"
+        }
+      };
+    scanner.scanApplications.mockImplementation(async (_roots, options) => {
+      for (const item of [original, replacement])
+        options?.onAppRead?.(item.bundlePath, item.bundlePath);
+      return [replacement, { ...original, id: original.bundlePath }];
+    });
+    clients.appStore.lookupOutcome.mockResolvedValue({ type: "transientFailure" });
+    await service.compute(false, 1, {}, new AbortController().signal);
+    expect(new Set(state.apps.map((item) => item.id)).size).toBe(2);
+    expect(state.apps.find((item) => item.bundlePath === original.bundlePath)?.id).toBe(
+      original.id
+    );
+    expect(state.ignoredIDs).toEqual([original.id]);
+    expect(
+      patches.every(
+        (patch) =>
+          !patch.updates?.some((item) => item.updateURL === "https://example.com/wrong-owner")
+      )
+    ).toBe(true);
+    expect(state.updates).toEqual([]);
+    expect(state.appUpdateComparisonBaseline).toEqual([]);
+    expect(state.recentlyUpdated).toEqual([]);
+    expect(state.appProviderChecks?.[original.id]).toMatchObject({
+      status: "failed",
+      fingerprint: appProviderFingerprint(original)
+    });
+    expect(state.appProviderChecks?.[original.id]?.appStoreIdentity).toBeUndefined();
+    clients.appStore.lookupOutcome.mockImplementation(async (identifier: string) => ({
+      type: "completed",
+      value: { remoteVersion: version("3"), updateURL: `https://example.com/${identifier}` }
+    }));
+    await service.compute(false, 2, {}, new AbortController().signal);
+    expect(state.updates).toHaveLength(2);
+    for (const item of state.apps) {
+      expect(state.updates.find((update) => update.appID === item.id)?.updateURL).toBe(
+        `https://example.com/${item.bundleIdentifier}`
+      );
+    }
+  }
+);

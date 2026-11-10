@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Arshia Ghaf
 // SPDX-License-Identifier: GPL-3.0-only
 
+import { Welcome } from "./components/Welcome";
 import { PermissionGuide } from "./components/PermissionGuide";
 import { baseline } from "./ipc";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { BaselineSnapshot } from "../shared/domain";
 import { defaultPersistedSnapshot, applySnapshotProgress } from "../shared/domain";
@@ -47,7 +48,8 @@ export function App() {
   const [route, setRoute] = useState<Route>(currentRoute());
   const [searchActive, setSearchActive] = useState(false);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
-  const introductionShown = useRef(false);
+  const [welcomeOpen, setWelcomeOpen] = useState<boolean>();
+  const focusAfterWelcome = useRef(false);
   const previousSearchTextRef = useRef(initialSnapshot.searchText);
 
   useEffect(() => {
@@ -66,6 +68,9 @@ export function App() {
       current = next;
       setSnapshot(next);
       setSnapshotLoaded(true);
+      // Keep the surface mounted until the preference write resolves, even when
+      // the store publishes its optimistic snapshot before persistence finishes.
+      setWelcomeOpen((current) => current ?? next.welcomeDismissed === false);
     };
     const resync = () => {
       if (resyncing) {
@@ -116,22 +121,29 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
-  useEffect(() => {
-    if (
-      route !== "main" ||
-      !snapshotLoaded ||
-      snapshot.updateIntroductionDismissed ||
-      introductionShown.current
-    )
-      return;
-    introductionShown.current = true;
-    void baseline.permissionGuide("show").catch(() => {});
-  }, [route, snapshotLoaded, snapshot.updateIntroductionDismissed]);
+  useLayoutEffect(() => {
+    if (welcomeOpen || !focusAfterWelcome.current) return;
+    focusAfterWelcome.current = false;
+    const title = document.querySelector<HTMLElement>(".topbar h1");
+    title?.setAttribute("tabindex", "-1");
+    title?.focus();
+  }, [welcomeOpen]);
 
   if (route === "permission-guide") return <PermissionGuide />;
 
   if (route === "settings") {
     return <SettingsView snapshot={snapshot} />;
+  }
+
+  if (route === "main" && snapshotLoaded && welcomeOpen) {
+    return (
+      <Welcome
+        onClose={() => {
+          focusAfterWelcome.current = true;
+          setWelcomeOpen(false);
+        }}
+      />
+    );
   }
 
   return (
