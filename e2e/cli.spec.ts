@@ -85,12 +85,6 @@ test("packaged CLI works with no user Node, no windows, concurrent GUI-backend r
       args: ["--baseline-cli-background"],
       env
     });
-    await app.evaluate(async ({ app }) => {
-      await app.whenReady();
-    });
-    await expect
-      .poll(async () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length))
-      .toBe(0);
     const run = (args: string[]) => promisify(execFile)(alias, args, { env, timeout: 20_000 });
     const mainErrors: string[] = [];
     app.process().stderr?.on("data", (chunk: Buffer) => mainErrors.push(chunk.toString()));
@@ -101,18 +95,20 @@ test("packaged CLI works with no user Node, no windows, concurrent GUI-backend r
         } catch (error) {
           return {
             error: String(error),
-            mainErrors,
-            profile: await app!.evaluate(({ app }) => ({
-              path: app.getPath("userData"),
-              appPath: app.getAppPath(),
-              ready: app.isReady(),
-              locked: app.hasSingleInstanceLock(),
-              argv: process.argv
-            }))
+            mainErrors
           };
         }
       })
       .toMatchObject({ ok: true });
+    // Backend readiness is later than app.whenReady(). Inspector evaluations can
+    // interrupt synchronous lazy Electron module setup, so access BrowserWindow
+    // only after returning to the application's normal event loop.
+    expect(
+      await app.evaluate(async (electron) => {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        return electron.BrowserWindow.getAllWindows().length;
+      })
+    ).toBe(0);
     const responses = await Promise.all(
       Array.from({ length: 12 }, () =>
         run(["status", "--json"]).catch(

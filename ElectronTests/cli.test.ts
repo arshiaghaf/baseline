@@ -148,6 +148,47 @@ describe("CLI admission and output contract", () => {
   )("answers local discovery %j without a backend", ({ args }) => {
     expect(parseCLIArguments(args).local).toBeDefined();
   });
+  it("uses command help while respecting literal arguments and value option syntax", () => {
+    for (const args of [
+      ["help", "update"],
+      ["update", "--help"]
+    ]) {
+      expect(parseCLIArguments(args)).toMatchObject({
+        local: "help",
+        help: expect.stringContaining("Usage: baseline update <id>")
+      });
+    }
+    expect(parseCLIArguments(["help"]).local).toBe("help");
+    expect(() => parseCLIArguments(["nonsense", "--help"])).toThrow(/Unknown command: nonsense/);
+    expect(parseCLIArguments(["inspect", "--", "--help"])).toMatchObject({
+      request: { command: "inspect", ids: ["--help"] },
+      json: false
+    });
+    expect(parseCLIArguments(["inspect", "--", "--json"])).toMatchObject({
+      request: { ids: ["--json"] },
+      json: false
+    });
+    expect(parseCLIArguments(["check", "--timeout=1"])).toMatchObject({ timeoutMS: 1000 });
+    const id = randomUUID();
+    expect(
+      parseCLIArguments([
+        "update",
+        "target",
+        `--operation-id=${id}`,
+        `--expect-plan=${"a".repeat(64)}`,
+        "--yes"
+      ])
+    ).toMatchObject({ request: { operationID: id, expectPlan: "a".repeat(64) } });
+    for (const args of [
+      ["check", "--timeout=1", "--timeout", "2"],
+      ["check", "--timeout="],
+      ["check", "--timeout=0"],
+      ["list", "--json=true"],
+      ["--help", "-h"],
+      ["help", "nonsense"]
+    ])
+      expect(() => parseCLIArguments(args)).toThrow();
+  });
   it("accepts exact IDs containing spaces and keeps global options independent of placement", () => {
     expect(
       parseCLIArguments([
@@ -473,6 +514,121 @@ describe("shared backend operations", () => {
       ).toMatchObject({ state: "failed", exitCode: 1, results: [{ status: "failed" }] });
     }
   );
+  it.each(["first", "new", "same-time", "historical", "forgotten-details", "cleared"])(
+    "distinguishes %s maintenance failures from installed package success",
+    async (scenario) => {
+      const f = fixture();
+      await check(f);
+      const maintenance = {
+        id: "update:homebrew:maintenance",
+        entityID: "homebrew:maintenance",
+        operation: "update" as const,
+        reason: "permission" as const,
+        status: 1,
+        occurredAt: "2025-01-01T00:00:00Z"
+      };
+      f.snapshot.operationFailures = scenario === "first" ? [] : [maintenance];
+      f.snapshot.operationFailureDetails = {
+        [maintenance.id]: { attemptID: "before", outputTail: "private old output" }
+      };
+      f.store.performHomebrewUpdate.mockImplementation(async () => {
+        f.snapshot.homebrewItems[0]!.installedVersion = version("2");
+        f.snapshot.homebrewItems[0]!.isOutdated = false;
+        if (["first", "new", "same-time"].includes(scenario))
+          f.snapshot.operationFailures = [
+            {
+              ...maintenance,
+              occurredAt: scenario === "same-time" ? maintenance.occurredAt : "2026-01-01T00:00:00Z"
+            }
+          ];
+        if (["first", "new", "same-time"].includes(scenario))
+          f.snapshot.operationFailureDetails = {
+            [maintenance.id]: { attemptID: "after", outputTail: "private new output" }
+          };
+        if (scenario === "forgotten-details") f.snapshot.operationFailureDetails = {};
+        if (scenario === "cleared") f.snapshot.operationFailures = [];
+      });
+      const result = await finished(
+        f.service,
+        await f.service.handle(req("update", { ids: ["brew:formula:example-tool"], yes: true }))
+      );
+      expect(result).toMatchObject({
+        state: ["first", "new", "same-time"].includes(scenario) ? "partial" : "succeeded",
+        exitCode: ["first", "new", "same-time"].includes(scenario) ? 1 : 0,
+        results: [{ status: "updated" }]
+      });
+      if (["first", "new", "same-time"].includes(scenario))
+        expect(result.results[0]).toMatchObject({
+          maintenanceFailure: { reason: "permission", status: 1 },
+          message: expect.stringContaining("Do not repeat the update")
+        });
+      else expect(result.results[0]).not.toHaveProperty("maintenanceFailure");
+      expect(JSON.stringify(result)).not.toMatch(/private old output|private new output|attemptID/);
+    }
+  );
+  it.each(["network", "permission", "integrity"] as const)(
+    "exposes safe %s recovery details without private output",
+    async (reason) => {
+      const f = fixture();
+      await check(f);
+      f.store.performHomebrewUpdate.mockImplementation(async () => {
+        f.snapshot.operationFailures = [
+          {
+            id: "update:formula:example-tool",
+            entityID: "formula:example-tool",
+            operation: "update",
+            reason,
+            status: 9,
+            occurredAt: "2026-01-01T00:00:00Z"
+          }
+        ];
+        f.snapshot.operationFailureDetails = {
+          "update:formula:example-tool": {
+            attemptID: "secret-attempt",
+            outputTail: "private-command-output"
+          }
+        };
+      });
+      const op = await finished(
+        f.service,
+        await f.service.handle(req("update", { ids: ["brew:formula:example-tool"], yes: true }))
+      );
+      expect(op).toMatchObject({
+        state: "failed",
+        exitCode: 1,
+        results: [
+          { failure: { reason, status: 9 }, message: expect.stringContaining("Exit status: 9") }
+        ]
+      });
+      const doctor = await f.service.handle(req("doctor"));
+      expect(doctor).toMatchObject({
+        data: {
+          failures: [{ reason, status: 9 }],
+          capabilities: { commands: expect.arrayContaining(["doctor"]) }
+        }
+      });
+      expect(JSON.stringify({ op, doctor })).not.toMatch(/private-command-output|secret-attempt/);
+    }
+  );
+  it("identifies invalid targets before any work and distinguishes unverified outcomes", async () => {
+    const f = fixture();
+    await check(f);
+    expect(
+      await f.service.handle(
+        req("update", { ids: ["brew:formula:example-tool", "wrong-id"], yes: true })
+      )
+    ).toMatchObject({ ok: false, error: { message: expect.stringContaining("wrong-id") } });
+    expect(f.store.performHomebrewUpdate).not.toHaveBeenCalled();
+    f.store.performHomebrewUpdate.mockResolvedValue(undefined);
+    expect(
+      await finished(
+        f.service,
+        await f.service.handle(req("update", { ids: ["brew:formula:example-tool"], yes: true }))
+      )
+    ).toMatchObject({
+      results: [{ outcome: "unknown", message: expect.stringContaining("unknown") }]
+    });
+  });
   it("reports mixed outcomes and keeps successful items when a later command fails", async () => {
     const f = fixture();
     await check(f);

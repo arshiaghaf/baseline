@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Arshia Ghaf
 // SPDX-License-Identifier: GPL-3.0-only
 
+import type { OperationFailure } from "./operationFailures";
+
 /** Public, additive v1 contract. Human output is deliberately not an API. */
 export const cliSchemaVersion = 1;
 export const cliExit = {
@@ -59,10 +61,30 @@ export type CLIOperation = {
     id: string;
     status: "updated" | "failed" | "requires-user-action" | "blocked";
     message?: string;
+    /** Safe classification only; never includes command output. */
+    failure?: Pick<OperationFailure, "reason" | "status">;
+    maintenanceFailure?: Pick<OperationFailure, "reason" | "status">;
+    outcome?: "unknown";
   }[];
   exitCode: number;
   message?: string;
 };
+
+/** Classification-only copy: retry advice must account for the installed outcome. */
+export function cliFailureDescription(
+  failure: Pick<OperationFailure, "reason" | "status">
+): string {
+  const descriptions: Record<OperationFailure["reason"], string> = {
+    network: "The download could not reach its server.",
+    permission: "The command did not have permission to complete.",
+    integrity: "The downloaded file failed its integrity check.",
+    unavailable: "The package is unavailable in the current metadata.",
+    locked: "Another package operation holds the lock.",
+    interrupted: "The update sequence stopped before this item completed.",
+    command: "The command did not complete."
+  };
+  return `${descriptions[failure.reason]}${failure.status === null ? "" : ` Exit status: ${failure.status}.`}`;
+}
 
 export class CLIError extends Error {
   constructor(
