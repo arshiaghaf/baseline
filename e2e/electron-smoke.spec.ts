@@ -189,7 +189,7 @@ test("launches the Electron shell and renders the dashboard", async () => {
     electron: process.versions.electron,
     node: process.versions.node
   }));
-  expect(runtime.electron?.split(".")[0]).toBe("44");
+  expect(runtime.electron?.split(".")[0]).toBe("45");
   expect(runtime.node.split(".")[0]).toBe("24");
   console.log(`Smoke runtime: Electron ${runtime.electron}; Node ${runtime.node}`);
 
