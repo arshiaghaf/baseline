@@ -39,7 +39,11 @@ async function checkResponsiveLayout(scrollbarMode: "WhenScrolling" | "Always") 
   const userData = await mkdtemp(path.join(os.tmpdir(), "baseline-layout-"));
   await writeFile(
     path.join(userData, "baseline-snapshot.json"),
-    JSON.stringify({ ...defaultPersistedSnapshot(), updateIntroductionDismissed: true })
+    JSON.stringify({
+      ...defaultPersistedSnapshot(),
+      welcomeDismissed: true,
+      updateIntroductionDismissed: true
+    })
   );
   let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
   const profileSecret = randomBytes(32).toString("base64url");
@@ -548,7 +552,11 @@ test("narrow operation notice wraps and compact confirmation keeps keyboard focu
   const userData = await mkdtemp(path.join(os.tmpdir(), "baseline-failure-layout-"));
   await writeFile(
     path.join(userData, "baseline-snapshot.json"),
-    JSON.stringify({ ...defaultPersistedSnapshot(), updateIntroductionDismissed: true })
+    JSON.stringify({
+      ...defaultPersistedSnapshot(),
+      welcomeDismissed: true,
+      updateIntroductionDismissed: true
+    })
   );
   let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
   const profileSecret = randomBytes(32).toString("base64url");
