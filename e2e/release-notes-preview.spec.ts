@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Arshia Ghaf
 // SPDX-License-Identifier: GPL-3.0-only
 
-import { _electron as electron, expect, test } from "@playwright/test";
+import { _electron as electron, expect, test, type Page } from "@playwright/test";
 import { execFile, type ChildProcess } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -10,6 +10,120 @@ import { promisify } from "node:util";
 import { defaultPersistedSnapshot } from "../src/shared/domain";
 import type { ReleaseNotesResult } from "../src/shared/releaseNotes";
 import { version } from "../src/shared/version";
+
+/** Diagnostic only: retain native input/compositor evidence without changing keyboard behavior. */
+async function startKeyboardTrace(page: Page): Promise<() => Promise<void>> {
+  const limit = 8 * 1024 * 1024;
+  const events: string[] = [];
+  const warnings: string[] = [];
+  let bytes = 0;
+  let truncated = false;
+  const bounded = async <T>(operation: Promise<T>): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Trace operation exceeded three seconds")),
+            3000
+          );
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  try {
+    let acceptingSession = true;
+    const pendingSession = page.context().newCDPSession(page);
+    void pendingSession.then(
+      (lateSession) => {
+        if (!acceptingSession) void lateSession.detach().catch(() => undefined);
+      },
+      () => undefined
+    );
+    const session = await bounded(pendingSession).finally(() => {
+      acceptingSession = false;
+    });
+    let complete!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    // ReportEvents avoids opening CDP IO streams, including on timeout/partial collection.
+    session.on("Tracing.dataCollected", ({ value }) => {
+      for (const event of value) {
+        if (truncated) break;
+        const encoded = JSON.stringify(event);
+        const size = Buffer.byteLength(encoded) + 1;
+        if (bytes + size > limit) {
+          truncated = true;
+          break;
+        }
+        bytes += size;
+        events.push(encoded);
+      }
+    });
+    let dataLossOccurred = false;
+    let traceComplete = false;
+    session.once("Tracing.tracingComplete", (event) => {
+      dataLossOccurred = event.dataLossOccurred ?? false;
+      traceComplete = true;
+      complete();
+    });
+    let finishing: Promise<void> | undefined;
+    const finish = () =>
+      (finishing ??= (async () => {
+        clearTimeout(deadline);
+        try {
+          await bounded(session.send("Tracing.end"));
+          await bounded(completed);
+        } catch (error) {
+          warnings.push(String(error));
+        } finally {
+          try {
+            await bounded(session.detach());
+          } catch (error) {
+            warnings.push(String(error));
+          }
+        }
+        try {
+          const tracePath = test.info().outputPath("notes-keyboard-trace.json");
+          await writeFile(
+            tracePath,
+            `{"traceEvents":[${events.join(",")}],"diagnostics":${JSON.stringify({ truncated, dataLossOccurred, traceComplete, warnings, limitBytes: limit, durationLimitMs: 15000 })}}`
+          );
+          await test
+            .info()
+            .attach("notes-keyboard-trace", { path: tracePath, contentType: "application/json" });
+        } catch (error) {
+          console.warn("Could not retain notes keyboard trace:", error);
+        }
+      })());
+    const deadline = setTimeout(() => {
+      void finish();
+    }, 15000);
+    try {
+      await bounded(
+        session.send("Tracing.start", {
+          transferMode: "ReportEvents",
+          traceConfig: {
+            recordMode: "recordContinuously",
+            traceBufferSizeInKb: 8192,
+            includedCategories: ["blink", "cc", "input"]
+          }
+        })
+      );
+    } catch (error) {
+      warnings.push(String(error));
+      await finish();
+    }
+    return finish;
+  } catch (error) {
+    console.warn("Could not start notes keyboard trace:", error);
+    return async () => {};
+  }
+}
 
 let entry: string;
 test.beforeAll(async () => {
@@ -25,6 +139,7 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
   const directory = await mkdtemp(path.join(os.tmpdir(), "baseline-notes-rendered-"));
   let application: Awaited<ReturnType<typeof electron.launch>> | undefined;
   let ownedProcess: ChildProcess | undefined;
+  let finishKeyboardTrace = async () => {};
   try {
     const apps = ["Store Sample", "Publisher Sample", "Offline Sample"].map((displayName, i) => ({
       id: `app:notes-${i}`,
@@ -214,6 +329,7 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
       name: "Release notes for Store Sample",
       exact: true
     });
+    finishKeyboardTrace = await startKeyboardTrace(page);
     await searchNotes.click();
     await expect(page.getByText("Published changes", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Close release notes" })).toBeFocused();
@@ -285,6 +401,8 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
         console.warn("Could not retain notes keyboard diagnostics:", diagnosticError);
       }
       throw error;
+    } finally {
+      await finishKeyboardTrace();
     }
     await page.keyboard.press("Shift+Tab");
     await expect(page.getByRole("button", { name: "Close release notes" })).toBeFocused();
@@ -374,6 +492,7 @@ test("verifies release-note hovering, cancellation, keyboard, navigation and lon
     expect(current.homebrewItems[0]?.installedVersion.raw).toBe("1");
     expect(errors).toEqual([]);
   } finally {
+    await finishKeyboardTrace();
     if (application) {
       await application.close();
       expect(ownedProcess!.exitCode !== null || ownedProcess!.signalCode !== null).toBe(true);

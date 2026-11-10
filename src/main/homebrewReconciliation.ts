@@ -159,7 +159,13 @@ export function preservePreviousHomebrewInventoryMembership(
               latestVersion: undefined,
               releaseDate: undefined
             }
-          : item
+          : {
+              ...item,
+              caskMembershipVerified: false,
+              isOutdated: false,
+              latestVersion: undefined,
+              releaseDate: undefined
+            }
       )
   ].sort((lhs, rhs) => lhs.kind.localeCompare(rhs.kind) || lhs.name.localeCompare(rhs.name));
 }
@@ -169,7 +175,10 @@ function knownPinIdentity(item: HomebrewManagedItem): string | undefined {
     homebrewItemIdentity(item) ??
     (formulaHasContinuityIdentity(item)
       ? homebrewItemIdentity({ ...item, formulaIdentityVerified: undefined })
-      : item.pinnedIdentity);
+      : item.kind === "cask"
+        ? (homebrewItemIdentity({ ...item, caskMembershipVerified: undefined }) ??
+          item.pinnedIdentity)
+        : item.pinnedIdentity);
   return identity && isValidHomebrewToken(identity) ? identity : undefined;
 }
 

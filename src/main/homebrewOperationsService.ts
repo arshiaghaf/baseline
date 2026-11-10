@@ -817,11 +817,26 @@ export class HomebrewOperationsService {
         const command =
           item.kind === "cask" ? ["install", "--cask", item.token] : ["install", item.token];
         const parser = new HomebrewMaintenanceOutputParser([item.token.toLowerCase()]);
-        const commandResult = await this.runBrewWithResultEvents(command, (event) => {
-          this.applyDiscoverInstallEvent(event, parser, itemID, item.token.toLowerCase());
-        });
+        const outcome = { completed: false, unchanged: false };
+        const applyInstallEvent = (event: HomebrewMaintenanceRunEvent) => {
+          this.applyDiscoverInstallEvent(
+            event,
+            parser,
+            itemID,
+            item.token.toLowerCase(),
+            item.kind,
+            outcome
+          );
+        };
+        const commandResult = await this.runBrewWithResultEvents(command, applyInstallEvent);
+        // Streamed evidence survives output truncation; returned output also covers
+        // runners that do not stream every line. Replaying evidence is idempotent.
+        for (const line of commandResult.output.split(/\r?\n/u)) {
+          applyInstallEvent({ type: "outputLine", command, line });
+        }
         if (await this.reconcileStoppedOperation(commandResult, [itemID])) return;
         const success = commandResult.success;
+        const installed = success && (outcome.completed || !outcome.unchanged);
         // Carry only this operation's persistence notice, not unrelated old state.
         const failureNotice = success
           ? undefined
@@ -849,27 +864,30 @@ export class HomebrewOperationsService {
           this.markHomebrewAvailabilityChecked();
           this.patch({ isHomebrewInstalled: true });
           let statsNotice: string | undefined;
-          try {
-            await this.recordProfileStatsEvents([homebrewInstallProfileStatsEvent(item)]);
-          } catch {
-            statsNotice =
-              "Homebrew install completed, but local update history could not be saved.";
+          if (installed) {
+            try {
+              await this.recordProfileStatsEvents([homebrewInstallProfileStatsEvent(item)]);
+            } catch {
+              statsNotice =
+                "Homebrew install completed, but local update history could not be saved.";
+            }
           }
           this.patch({
             homebrewDiscoverInstallingItemIDs: removeFromArray(
               this.state.homebrewDiscoverInstallingItemIDs,
               itemID
             ),
-            homebrewDiscoverInstalledPendingRefreshItemIDs: addToArray(
-              this.state.homebrewDiscoverInstalledPendingRefreshItemIDs,
-              itemID
-            ),
-            homebrewDiscoverProgressByItemID: {
-              ...this.state.homebrewDiscoverProgressByItemID,
-              [itemID]: 1
-            }
+            homebrewDiscoverInstalledPendingRefreshItemIDs: installed
+              ? addToArray(this.state.homebrewDiscoverInstalledPendingRefreshItemIDs, itemID)
+              : removeFromArray(this.state.homebrewDiscoverInstalledPendingRefreshItemIDs, itemID),
+            homebrewDiscoverProgressByItemID: installed
+              ? {
+                  ...this.state.homebrewDiscoverProgressByItemID,
+                  [itemID]: 1
+                }
+              : removeRecordKey(this.state.homebrewDiscoverProgressByItemID, itemID)
           });
-          await this.holdSuccessfulUpdate();
+          if (installed) await this.holdSuccessfulUpdate();
           await this.refresh(true);
           this.applyOperationNotice(statsNotice);
         } else {
@@ -1345,15 +1363,35 @@ export class HomebrewOperationsService {
     event: HomebrewMaintenanceRunEvent,
     parser: HomebrewMaintenanceOutputParser,
     itemID: string,
-    token: string
+    token: string,
+    kind: HomebrewManagedItemKind,
+    outcome: { completed: boolean; unchanged: boolean }
   ): void {
     if (event.type !== "outputLine") {
       return;
     }
+    // A cask command may also install formula dependencies with the same
+    // short token. Explicit output kind evidence outranks the command's kind.
+    const outputKind = /\/Cellar\//iu.test(event.line)
+      ? "formula"
+      : /\/Caskroom\//iu.test(event.line) ||
+          /\bcask\s/iu.test(event.line) ||
+          /was successfully installed/iu.test(event.line)
+        ? "cask"
+        : /\bformula\s/iu.test(event.line)
+          ? "formula"
+          : undefined;
     for (const parsed of parser.parse(event.line, event.command)) {
-      if (parsed.token !== token || parsed.kind.type !== "progress") {
-        continue;
+      const kindHint = outputKind ?? parsed.kindHint;
+      if (parsed.token !== token || (kindHint && kindHint !== kind)) continue;
+      if (parsed.kind.type === "completed") {
+        // A generic summary may mention the target while reporting dependency
+        // work. Require direct completion evidence to override an explicit no-op.
+        if (kindHint) outcome.completed = true;
+      } else if (parsed.kind.type === "unchanged" || parsed.kind.type === "skipped") {
+        outcome.unchanged = true;
       }
+      if (parsed.kind.type !== "progress") continue;
       this.patch({
         homebrewDiscoverProgressByItemID: {
           ...this.state.homebrewDiscoverProgressByItemID,

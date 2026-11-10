@@ -95,6 +95,40 @@ it("omits unsupported Homebrew source controls before any notes lookup", () => {
   ).not.toBeInTheDocument();
 });
 
+it.each([
+  [
+    "app row",
+    (state: BaselineSnapshot) => <AppRow app={app} snapshot={state} recentlyUpdated={false} />
+  ],
+  ["app card", (state: BaselineSnapshot) => <AppUpdateCard app={app} snapshot={state} />],
+  [
+    "cask row",
+    (state: BaselineSnapshot) => <HomebrewRow item={state.homebrewItems[0]!} snapshot={state} />
+  ],
+  [
+    "cask card",
+    (state: BaselineSnapshot) => (
+      <HomebrewUpdateCard item={state.homebrewItems[0]!} snapshot={state} />
+    )
+  ]
+] as const)(
+  "revokes %s uninstall after membership failure and restores it after recovery",
+  (_label, component) => {
+    const retained = {
+      ...cask,
+      caskMembershipVerified: false,
+      isOutdated: false,
+      latestVersion: undefined
+    };
+    const view = render(component(snapshot({ homebrewItems: [retained], updates: [] })));
+    fireEvent.click(screen.getByRole("button", { name: "Actions" }));
+    expect(screen.getByRole("menuitem", { name: "Ignore" })).toBeEnabled();
+    expect(screen.queryByRole("menuitem", { name: "Uninstall" })).not.toBeInTheDocument();
+    view.rerender(component(snapshot()));
+    expect(screen.getByRole("menuitem", { name: "Uninstall" })).toBeEnabled();
+  }
+);
+
 function snapshot(patch: Partial<BaselineSnapshot> = {}): BaselineSnapshot {
   return {
     ...defaultPersistedSnapshot(),
