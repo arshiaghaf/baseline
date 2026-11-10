@@ -3,7 +3,7 @@
 
 import path from "node:path";
 import { isMacOSManagedApp } from "./macOSManagedApps";
-import { reconcileScannedApps } from "./scanReconciliation";
+import { ambiguousAppIDs, reconcileScannedApps } from "./scanReconciliation";
 import type {
   AppRecord,
   AppUpdateComparison,
@@ -145,14 +145,28 @@ export class RefreshComputationService {
     signal: AbortSignal
   ): Promise<void> {
     this.ports.beginRefresh(sequence);
-    const comparisonBaseline =
-      this.ports.readState().appUpdateComparisonBaseline ??
-      appUpdateComparisons(this.ports.readState().updates);
+    const previous = this.ports.readState();
+    const ambiguousIDs = ambiguousAppIDs(previous.apps);
+    // Older snapshots may already contain collisions. No ID-keyed evidence can
+    // identify its owner reliably, even when a cached fingerprint happens to match.
+    const comparisonBaseline = (
+      previous.appUpdateComparisonBaseline ?? appUpdateComparisons(previous.updates)
+    ).filter((item) => !ambiguousIDs.has(item.appID));
     this.ports.patch({
       // Seed older snapshots before any preview can remove comparison evidence.
       // Failed or superseded generations leave this baseline intact for retries
       // and unrelated preference saves, including a later relaunch.
       appUpdateComparisonBaseline: comparisonBaseline,
+      ...(ambiguousIDs.size
+        ? {
+            updates: previous.updates.filter((item) => !ambiguousIDs.has(item.appID)),
+            appProviderChecks: Object.fromEntries(
+              Object.entries(previous.appProviderChecks ?? {}).filter(
+                ([id]) => !ambiguousIDs.has(id)
+              )
+            )
+          }
+        : {}),
       isRefreshing: true,
       appDiscoveryComplete: false,
       homebrewCheckStatus: "checking",

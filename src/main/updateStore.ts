@@ -186,7 +186,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         this.refreshRecoveryRequired = undefined;
       }
     },
-    () => void this.refresh(true)
+    () => this.runBackgroundRefresh(true)
   );
 
   constructor(options: {
@@ -546,7 +546,14 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     this.requireOpen();
     await this.refreshToolStatus();
     this.restartAutoRefreshLoop();
-    void this.refresh(false);
+    this.runBackgroundRefresh(false);
+  }
+
+  private runBackgroundRefresh(lightweight: boolean, options: RefreshOptions = {}): void {
+    // Computation publishes the failure before attempting its recovery save.
+    // Detached callers own the final rejection when persistence remains unavailable;
+    // explicit refresh and quit callers must still observe their rejected saves.
+    void this.refresh(lightweight, options).catch(() => undefined);
   }
 
   getSnapshot(): BaselineSnapshot {
@@ -753,7 +760,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
         this.patch({ isRefreshing: false });
         this.restartAutoRefreshLoop();
         if (this.refreshRecoveryRequired && !this.hasActiveUpdateOperation()) {
-          void this.refresh(false, this.refreshRecoveryRequired).catch(() => undefined);
+          this.runBackgroundRefresh(false, this.refreshRecoveryRequired);
         }
       }
     }
@@ -774,6 +781,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
 
   async toggleIgnoredApp(appID: string): Promise<void> {
     this.requireOpen();
+    this.assertUnambiguousAppID(appID);
     const ignored = new Set(this.state.ignoredIDs);
     toggleSet(ignored, appID);
     this.patch({ ignoredIDs: [...ignored].sort() });
@@ -943,8 +951,15 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
     await this.refresh(false, { forceMetadata: false });
   }
 
+  private assertUnambiguousAppID(appID: string): void {
+    if (this.state.apps.filter((app) => app.id === appID).length > 1) {
+      throw new Error("The app identity is ambiguous. Refresh and try again.");
+    }
+  }
+
   async openApp(appID: string): Promise<void> {
     this.requireOpen();
+    this.assertUnambiguousAppID(appID);
     const appRecord = this.state.apps.find((app) => app.id === appID);
     if (appRecord) {
       await this.openAppWithFeedback(appRecord);
@@ -989,6 +1004,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
 
   async performAppUpdate(appID: string): Promise<void> {
     this.beginUserMutation();
+    this.assertUnambiguousAppID(appID);
     const appRecord = this.state.apps.find((app) => app.id === appID);
     if (!appRecord) {
       return;
@@ -1089,6 +1105,7 @@ export class UpdateStore extends EventEmitter<StoreEvents> {
    * opened app/URL as an installed update. The GUI retains its existing routes. */
   async performCLIAppHandoff(appID: string): Promise<void> {
     this.requireOpen();
+    this.assertUnambiguousAppID(appID);
     const app = this.state.apps.find((candidate) => candidate.id === appID);
     const update = this.state.updates.find((candidate) => candidate.appID === appID);
     if (
