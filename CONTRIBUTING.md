@@ -8,7 +8,7 @@ with Vite, React, TypeScript, and Tailwind.
 Requirements:
 
 - macOS 15 or later on Apple Silicon for running and validating the app
-- Node.js 24.22.2 (pinned in `.node-version` and CI)
+- Node.js 26.13.1 (pinned in `.node-version` and CI)
 - npm
 
 Packages target only macOS arm64, including when built from another host. Native
