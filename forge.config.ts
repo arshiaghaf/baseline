@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import packageJSON from "./package.json";
 import dmgLayout from "./assets/dmg/layout.json";
 import { buildNumberForAppVersion, validBuildNumber } from "./src/shared/buildNumber";
-import { localAdHocSigningOptions, verifyPackagedMacSignatures } from "./macSigning.config";
+import { macSigningOptions, verifyPackagedMacSignatures } from "./macSigning.config";
 import { packageAdminAskpass } from "./adminAskpass.config";
 import { packageSelfUpdater, selfUpdateInfo } from "./selfUpdatePackaging.config";
 import { packageCLI } from "./cliPackaging.config";
@@ -45,7 +45,7 @@ const config: ForgeConfig = {
     appBundleId: "com.arshiaghaf.baseline",
     appCategoryType: "public.app-category.utilities",
     asar: true,
-    osxSign: localAdHocSigningOptions(),
+    osxSign: macSigningOptions(),
     extendInfo: {
       LSMinimumSystemVersion: "15.0",
       ...selfUpdateInfo()

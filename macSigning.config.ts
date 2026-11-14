@@ -34,6 +34,26 @@ export function localAdHocSigningOptions(): MacSigningOptions {
   };
 }
 
+// Opt in explicitly for distribution; never silently substitute an ad-hoc identity.
+export function macSigningOptions(
+  identity = process.env.BASELINE_SIGNING_IDENTITY
+): MacSigningOptions {
+  if (identity === undefined) return localAdHocSigningOptions();
+  if (!/^Developer ID Application: .+ \([A-Z0-9]{10}\)$/.test(identity)) {
+    throw new Error("BASELINE_SIGNING_IDENTITY must name a Developer ID Application certificate.");
+  }
+  return {
+    ...localAdHocSigningOptions(),
+    identity,
+    identityValidation: true,
+    optionsForFile: () => ({
+      hardenedRuntime: true,
+      // Omitting timestamp uses Apple's timestamp server.
+      entitlements: ["com.apple.security.cs.allow-jit"]
+    })
+  };
+}
+
 export function verifyMacBundle(appPath: string): void {
   execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath], {
     stdio: "pipe"
