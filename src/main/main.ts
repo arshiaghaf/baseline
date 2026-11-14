@@ -522,31 +522,21 @@ async function checkForBaselineUpdates(): Promise<void> {
       );
       return;
     }
-    const update = await store.checkForSelfUpdate();
     if (isQuitting || quitTask) return;
-    if (update?.available && update.releaseURL) {
-      const result = await dialog.showMessageBox({
-        type: "info",
-        message: "A Baseline update is available",
-        detail: `Baseline ${update.latestVersion?.raw ?? ""} is available. You are using ${metadata.version}. Open the release page to download it.`,
-        buttons: ["Open Release Page", "Later"],
-        defaultId: 0,
-        cancelId: 1
-      });
-      if (result.response === 0 && !isQuitting && !quitTask)
-        await store.openExternal(update.releaseURL);
-    } else {
-      await dialog.showMessageBox({
-        type: "info",
-        message: update?.latestVersion
-          ? "Baseline is up to date"
-          : "Could not check for Baseline updates",
-        detail: update?.latestVersion
-          ? `You are using Baseline ${metadata.version}. No newer release is available.`
-          : "Check your internet connection and try again.",
-        buttons: ["OK"]
-      });
-    }
+    // GitHub release discovery powers the badge only. Sparkle is the normal
+    // update route; unavailable installations get an explicit recovery choice,
+    // never a second updater driven by unauthenticated release metadata.
+    const result = await dialog.showMessageBox({
+      type: "info",
+      message: "In-app updating is unavailable for this installation",
+      detail:
+        "Use your original installation method to update Baseline, or download the latest release manually.",
+      buttons: ["Open releases", "Later"],
+      defaultId: 1,
+      cancelId: 1
+    });
+    if (result.response === 0 && !isQuitting && !quitTask)
+      await store.openExternal("https://github.com/arshiaghaf/baseline/releases/latest");
   } catch {
     if (!isQuitting && !quitTask) {
       const response = await dialog.showMessageBox({
@@ -558,7 +548,7 @@ async function checkForBaselineUpdates(): Promise<void> {
         defaultId: 1,
         cancelId: 1
       });
-      if (response.response === 0)
+      if (response.response === 0 && !isQuitting && !quitTask)
         await store.openExternal("https://github.com/arshiaghaf/baseline/releases/latest");
     }
   } finally {

@@ -585,14 +585,14 @@ test("routes native tray events with the Dock hidden and protects a running upda
         ).nativeTrayProbe?.dialogs.map((dialog) => dialog.message)
       )
     )
-    .toContain("Baseline is up to date");
+    .toContain("In-app updating is unavailable for this installation");
   expect(
     await application.evaluate(
       () =>
         (globalThis as typeof globalThis & { nativeTrayProbe?: NativeTrayProbe }).nativeTrayProbe
           ?.selfUpdateChecks
     )
-  ).toBe(1);
+  ).toBe(0);
   await page.evaluate(() => {
     void window.baseline.performAppUpdate("fixture-app");
   });
