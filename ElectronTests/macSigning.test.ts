@@ -4,8 +4,7 @@
 import type { ForgeHookFn, ResolvedForgeConfig } from "@electron-forge/shared-types";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import config from "../forge.config";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   localAdHocSigningOptions,
   macSigningOptions,
@@ -19,6 +18,12 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 describe("macOS package signing policy", () => {
+  let config: typeof import("../forge.config").default;
+  beforeAll(async () => {
+    vi.stubEnv("BASELINE_SIGNING_IDENTITY", undefined);
+    config = (await import("../forge.config")).default;
+  });
+  afterAll(() => vi.unstubAllEnvs());
   beforeEach(() => vi.mocked(execFileSync).mockReset());
 
   it("wires certificate-free signing and a final production verification gate", () => {
