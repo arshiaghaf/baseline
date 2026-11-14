@@ -6,7 +6,11 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import config from "../forge.config";
-import { localAdHocSigningOptions, verifyPackagedMacSignatures } from "../macSigning.config";
+import {
+  localAdHocSigningOptions,
+  macSigningOptions,
+  verifyPackagedMacSignatures
+} from "../macSigning.config";
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
@@ -34,6 +38,25 @@ describe("macOS package signing policy", () => {
       entitlements: ["com.apple.security.cs.allow-jit"]
     });
   });
+
+  it("uses hardened, timestamped Developer ID signing only when explicitly selected", () => {
+    const identity = "Developer ID Application: Fixture (ABCDEFGHIJ)";
+    const options = macSigningOptions(identity);
+    expect(options).toMatchObject({ identity, identityValidation: true, continueOnError: false });
+    expect(options.optionsForFile?.("Fixture.app")).toEqual({
+      hardenedRuntime: true,
+      entitlements: ["com.apple.security.cs.allow-jit"]
+    });
+  });
+
+  it.each([
+    "",
+    "-",
+    "Apple Development: Fixture (ABCDEFGHIJ)",
+    "Developer ID Application: Fixture"
+  ])("rejects invalid distribution identity %s rather than falling back to ad-hoc", (identity) =>
+    expect(() => macSigningOptions(identity)).toThrow("Developer ID Application")
+  );
 
   it.each(["arm64"] as const)(
     "verifies every %s package without replacing its signature",
