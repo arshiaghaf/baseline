@@ -54,7 +54,7 @@
     "@electron-forge/cli": "^8.0.1",
     "@electron-forge/maker-dmg": "^8.0.1",
     "@electron-forge/maker-zip": "^7.11.2",
-    "@electron-forge/plugin-vite": "^7.11.2",
+    "@electron-forge/plugin-vite": "^8.0.1",
     "@electron/asar": "^3.4.1",
     "@electron/osx-sign": "^2.7.2",
     "@eslint/js": "^10.0.1",
