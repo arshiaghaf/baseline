@@ -72,7 +72,7 @@
     "electron-installer-dmg": "^5.0.1",
     "eslint": "^10.15.0",
     "image-size": "file:build-support/image-size-compat",
-    "jsdom": "^30.1.3",
+    "jsdom": "^31.0.1",
     "postcss": "^8.5.33",
     "prettier": "^3.10.1",
     "tailwindcss": "^4.3.5",
